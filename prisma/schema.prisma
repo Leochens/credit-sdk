@@ -1,0 +1,60 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id                  String    @id @default(cuid())
+  credits             Int       @default(0)
+  membershipTier      String?
+  membershipExpiresAt DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  
+  transactions        Transaction[]
+  auditLogs           AuditLog[]
+}
+
+model Transaction {
+  id            String   @id @default(cuid())
+  userId        String
+  action        String
+  amount        Int
+  balanceBefore Int
+  balanceAfter  Int
+  metadata      Json     @default("{}")
+  createdAt     DateTime @default(now())
+  
+  user          User     @relation(fields: [userId], references: [id])
+  
+  @@index([userId, createdAt])
+}
+
+model AuditLog {
+  id           String   @id @default(cuid())
+  userId       String
+  action       String
+  status       String
+  metadata     Json     @default("{}")
+  errorMessage String?
+  createdAt    DateTime @default(now())
+  
+  user         User     @relation(fields: [userId], references: [id])
+  
+  @@index([userId, createdAt])
+}
+
+model IdempotencyRecord {
+  key       String   @id
+  result    Json
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  
+  @@index([expiresAt])
+}

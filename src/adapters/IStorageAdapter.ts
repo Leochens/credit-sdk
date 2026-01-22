@@ -1,0 +1,177 @@
+/**
+ * 存储适配器接口
+ * 定义所有数据库操作的抽象接口
+ * 
+ * 这个接口是 SDK 与数据库交互的唯一方式，允许用户使用任何数据库系统
+ * 而不被锁定在特定的 ORM 中。
+ */
+
+import {
+  User,
+  Transaction,
+  TransactionInput,
+  AuditLog,
+  AuditLogInput,
+  IdempotencyRecord,
+  IdempotencyRecordInput
+} from '../core/types';
+
+/**
+ * 存储适配器接口
+ * 
+ * 所有方法都接受可选的事务上下文参数 (txn)，用于支持事务透传。
+ * 当提供事务上下文时，所有操作应该在该事务范围内执行。
+ */
+export interface IStorageAdapter {
+  /**
+   * 根据用户 ID 获取用户信息
+   * 
+   * @param userId - 用户唯一标识符
+   * @param txn - 可选的事务上下文，用于在事务中执行查询
+   * @returns 用户对象，如果不存在则返回 null
+   * 
+   * @example
+   * const user = await adapter.getUserById('user-123');
+   * if (user) {
+   *   console.log(`User has ${user.credits} credits`);
+   * }
+   */
+  getUserById(userId: string, txn?: any): Promise<User | null>;
+
+  /**
+   * 更新用户积分余额
+   * 
+   * @param userId - 用户唯一标识符
+   * @param amount - 变更金额 (正数为增加，负数为减少)
+   * @param txn - 可选的事务上下文
+   * @returns 更新后的用户对象
+   * @throws 如果用户不存在应该抛出错误
+   * 
+   * @example
+   * // 扣除 10 积分
+   * const user = await adapter.updateUserCredits('user-123', -10);
+   * 
+   * // 增加 50 积分
+   * const user = await adapter.updateUserCredits('user-123', 50);
+   */
+  updateUserCredits(userId: string, amount: number, txn?: any): Promise<User>;
+
+  /**
+   * 创建交易记录
+   * 
+   * @param transaction - 交易数据
+   * @param txn - 可选的事务上下文
+   * @returns 创建的交易记录 (包含生成的 ID 和时间戳)
+   * 
+   * @example
+   * const transaction = await adapter.createTransaction({
+   *   userId: 'user-123',
+   *   action: 'generate-post',
+   *   amount: -10,
+   *   balanceBefore: 100,
+   *   balanceAfter: 90,
+   *   metadata: { postId: 'post-456' }
+   * });
+   */
+  createTransaction(transaction: TransactionInput, txn?: any): Promise<Transaction>;
+
+  /**
+   * 创建审计日志
+   * 
+   * @param log - 日志数据
+   * @param txn - 可选的事务上下文
+   * @returns 创建的审计日志 (包含生成的 ID 和时间戳)
+   * 
+   * @example
+   * const auditLog = await adapter.createAuditLog({
+   *   userId: 'user-123',
+   *   action: 'charge',
+   *   status: 'success',
+   *   metadata: { cost: 10, action: 'generate-post' }
+   * });
+   */
+  createAuditLog(log: AuditLogInput, txn?: any): Promise<AuditLog>;
+
+  /**
+   * 获取幂等性记录
+   * 
+   * @param key - 幂等键
+   * @param txn - 可选的事务上下文
+   * @returns 幂等性记录，如果不存在或已过期则返回 null
+   * 
+   * 实现注意事项：
+   * - 应该检查记录是否过期 (expiresAt < now)
+   * - 如果过期，应该返回 null (可选：删除过期记录)
+   * 
+   * @example
+   * const record = await adapter.getIdempotencyRecord('idempotency-key-123');
+   * if (record) {
+   *   // 返回缓存的结果
+   *   return record.result;
+   * }
+   */
+  getIdempotencyRecord(key: string, txn?: any): Promise<IdempotencyRecord | null>;
+
+  /**
+   * 创建幂等性记录
+   * 
+   * @param record - 幂等性记录数据
+   * @param txn - 可选的事务上下文
+   * @returns 创建的幂等性记录 (包含创建时间)
+   * 
+   * @example
+   * const record = await adapter.createIdempotencyRecord({
+   *   key: 'idempotency-key-123',
+   *   result: { success: true, transactionId: 'txn-456' },
+   *   expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000) // 24小时后过期
+   * });
+   */
+  createIdempotencyRecord(record: IdempotencyRecordInput, txn?: any): Promise<IdempotencyRecord>;
+
+  /**
+   * 获取用户的交易历史
+   * 
+   * @param userId - 用户唯一标识符
+   * @param options - 查询选项 (分页、过滤等)
+   * @param txn - 可选的事务上下文
+   * @returns 交易记录列表，按时间戳降序排列
+   * 
+   * 实现注意事项：
+   * - 必须按 createdAt 降序排序
+   * - 支持 limit 和 offset 分页
+   * - 支持日期范围过滤 (startDate, endDate)
+   * - 支持操作类型过滤 (action)
+   * 
+   * @example
+   * // 获取最近 10 条交易
+   * const transactions = await adapter.getTransactions('user-123', { limit: 10 });
+   * 
+   * // 分页查询
+   * const transactions = await adapter.getTransactions('user-123', { 
+   *   limit: 20, 
+   *   offset: 40 
+   * });
+   * 
+   * // 按日期范围过滤
+   * const transactions = await adapter.getTransactions('user-123', {
+   *   startDate: new Date('2024-01-01'),
+   *   endDate: new Date('2024-12-31')
+   * });
+   * 
+   * // 按操作类型过滤
+   * const transactions = await adapter.getTransactions('user-123', {
+   *   action: 'generate-post'
+   * });
+   */
+  getTransactions(
+    userId: string,
+    options?: {
+      limit?: number;
+      offset?: number;
+      startDate?: Date;
+      endDate?: Date;
+      action?: string;
+    },
+    txn?: any
+  ): Promise<Transaction[]>;
+}

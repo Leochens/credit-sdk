@@ -1,0 +1,29 @@
+{
+  "name": "credit-sdk",
+  "version": "1.0.0",
+  "description": "通用 SaaS 积分系统 SDK",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest --run",
+    "test:watch": "vitest",
+    "type-check": "tsc --noEmit"
+  },
+  "keywords": [
+    "credits",
+    "saas",
+    "billing",
+    "sdk"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@prisma/client": "^7.3.0",
+    "@types/node": "^20.0.0",
+    "fast-check": "^3.0.0",
+    "prisma": "^7.3.0",
+    "typescript": "^5.0.0",
+    "vitest": "^1.0.0"
+  }
+}
