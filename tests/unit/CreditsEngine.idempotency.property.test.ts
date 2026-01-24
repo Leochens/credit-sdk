@@ -249,6 +249,10 @@ describe('CreditsEngine Idempotency - Property Tests', () => {
             const userId1 = `user-diff-keys-1-${Date.now()}-${Math.floor(Math.random() * 1000000)}`;
             const userId2 = `user-diff-keys-2-${Date.now()}-${Math.floor(Math.random() * 1000000)}`;
             
+            // Make idempotency keys unique per user to avoid collisions across test iterations
+            const uniqueIdempotencyKey1 = `${userId1}-${idempotencyKey1}`;
+            const uniqueIdempotencyKey2 = `${userId2}-${idempotencyKey2}`;
+            
             const user1: User = {
               id: userId1,
               credits: initialCredits,
@@ -272,14 +276,14 @@ describe('CreditsEngine Idempotency - Property Tests', () => {
             const result1 = await engine.upgradeTier({
               userId: userId1,
               targetTier,
-              idempotencyKey: idempotencyKey1
+              idempotencyKey: uniqueIdempotencyKey1
             });
 
             // 使用第二个幂等键调用
             const result2 = await engine.upgradeTier({
               userId: userId2,
               targetTier,
-              idempotencyKey: idempotencyKey2
+              idempotencyKey: uniqueIdempotencyKey2
             });
 
             // 验证两次调用创建了不同的交易
