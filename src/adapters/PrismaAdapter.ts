@@ -345,6 +345,69 @@ export class PrismaAdapter implements IStorageAdapter {
   }
 
   /**
+   * 更新用户会员等级和积分
+   * 
+   * 在单个原子操作中同时更新用户的会员等级、积分余额和会员到期时间。
+   * 
+   * @param userId - 用户唯一标识符
+   * @param membershipTier - 新的会员等级
+   * @param credits - 新的积分余额
+   * @param membershipExpiresAt - 会员到期时间（可选）
+   * @param txn - 可选的事务上下文
+   * @returns 更新后的用户对象
+   * @throws UserNotFoundError 如果用户不存在
+   */
+  async updateUserMembership(
+    userId: string,
+    membershipTier: string,
+    credits: number,
+    membershipExpiresAt?: Date | null,
+    txn?: any
+  ): Promise<User> {
+    const client = this.getClient(txn);
+    
+    try {
+      // 构建更新数据对象
+      const updateData: any = {
+        membershipTier,
+        credits
+      };
+
+      // 处理 membershipExpiresAt 参数
+      // undefined: 不修改现有值（不包含在 updateData 中）
+      // null: 清除到期时间
+      // Date: 设置为指定日期
+      if (membershipExpiresAt !== undefined) {
+        updateData.membershipExpiresAt = membershipExpiresAt;
+      }
+
+      // 在单个原子操作中更新所有字段
+      const user = await client.user.update({
+        where: { id: userId },
+        data: updateData
+      });
+
+      // 将 Prisma 模型映射到 SDK User 类型
+      return {
+        id: user.id,
+        credits: user.credits,
+        membershipTier: user.membershipTier,
+        membershipExpiresAt: user.membershipExpiresAt,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt
+      };
+    } catch (error: any) {
+      // 处理用户不存在的情况
+      if (error.code === 'P2025') {
+        throw new UserNotFoundError(userId);
+      }
+      
+      // 转换其他 Prisma 错误
+      throw this.handlePrismaError(error, 'updateUserMembership');
+    }
+  }
+
+  /**
    * 处理 Prisma 错误并转换为 SDK 错误
    * 
    * @param error - Prisma 错误对象

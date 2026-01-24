@@ -89,6 +89,12 @@ const validConfig: CreditsConfig = {
     requirements: {
       'generate-post': null,
       'generate-image': 'premium'
+    },
+    creditsCaps: {
+      free: 100,
+      basic: 500,
+      premium: 2000,
+      enterprise: 10000
     }
   },
   retry: {
@@ -344,6 +350,117 @@ describe('CreditsEngine Constructor', () => {
       expect(() => {
         new CreditsEngine({ storage, config: invalidConfig });
       }).toThrow('level must be non-negative');
+    });
+  });
+
+  describe('Configuration Validation - Credits Caps', () => {
+    it('should throw ConfigurationError when creditsCaps is missing', () => {
+      const invalidConfig = {
+        ...validConfig,
+        membership: {
+          ...validConfig.membership,
+          creditsCaps: undefined as any
+        }
+      };
+      
+      expect(() => {
+        new CreditsEngine({ storage, config: invalidConfig });
+      }).toThrow(ConfigurationError);
+      
+      expect(() => {
+        new CreditsEngine({ storage, config: invalidConfig });
+      }).toThrow('Membership configuration must include creditsCaps');
+    });
+
+    it('should throw ConfigurationError when a tier is missing its credits cap', () => {
+      const invalidConfig = {
+        ...validConfig,
+        membership: {
+          ...validConfig.membership,
+          creditsCaps: {
+            free: 100,
+            basic: 500,
+            premium: 2000
+            // enterprise is missing
+          }
+        }
+      };
+      
+      expect(() => {
+        new CreditsEngine({ storage, config: invalidConfig });
+      }).toThrow(ConfigurationError);
+      
+      expect(() => {
+        new CreditsEngine({ storage, config: invalidConfig });
+      }).toThrow("Missing credits cap for tier 'enterprise'");
+    });
+
+    it('should throw ConfigurationError when credits cap is not a number', () => {
+      const invalidConfig = {
+        ...validConfig,
+        membership: {
+          ...validConfig.membership,
+          creditsCaps: {
+            free: 100,
+            basic: 500,
+            premium: '2000' as any,
+            enterprise: 10000
+          }
+        }
+      };
+      
+      expect(() => {
+        new CreditsEngine({ storage, config: invalidConfig });
+      }).toThrow(ConfigurationError);
+      
+      expect(() => {
+        new CreditsEngine({ storage, config: invalidConfig });
+      }).toThrow("Credits cap for tier 'premium' must be a non-negative number");
+    });
+
+    it('should throw ConfigurationError when credits cap is negative', () => {
+      const invalidConfig = {
+        ...validConfig,
+        membership: {
+          ...validConfig.membership,
+          creditsCaps: {
+            free: 100,
+            basic: -500,
+            premium: 2000,
+            enterprise: 10000
+          }
+        }
+      };
+      
+      expect(() => {
+        new CreditsEngine({ storage, config: invalidConfig });
+      }).toThrow(ConfigurationError);
+      
+      expect(() => {
+        new CreditsEngine({ storage, config: invalidConfig });
+      }).toThrow("Credits cap for tier 'basic' must be a non-negative number");
+    });
+
+    it('should accept valid creditsCaps configuration', () => {
+      const validConfigWithCaps = {
+        ...validConfig,
+        membership: {
+          ...validConfig.membership,
+          creditsCaps: {
+            free: 0,
+            basic: 100,
+            premium: 1000,
+            enterprise: 10000
+          }
+        }
+      };
+      
+      const engine = new CreditsEngine({
+        storage,
+        config: validConfigWithCaps
+      });
+
+      expect(engine).toBeInstanceOf(CreditsEngine);
     });
   });
 

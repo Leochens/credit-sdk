@@ -251,6 +251,14 @@ export interface CostConfig {
 }
 
 /**
+ * 会员等级积分上限配置
+ * 定义每个会员等级的积分上限
+ */
+export interface TierCreditsCapConfig {
+  [tier: string]: number;
+}
+
+/**
  * 会员配置类型
  * 定义会员等级和权限要求
  */
@@ -263,6 +271,8 @@ export interface MembershipConfig {
   requirements: {
     [action: string]: string | null;
   };
+  /** 每个等级的积分上限 */
+  creditsCaps: TierCreditsCapConfig;
 }
 
 /**
@@ -317,4 +327,63 @@ export interface CreditsConfig {
   idempotency: IdempotencyConfig;
   /** 审计配置 */
   audit: AuditConfig;
+}
+
+/**
+ * 升级会员等级参数
+ * 用于调用 upgradeTier 方法
+ */
+export interface UpgradeTierParams {
+  /** 用户 ID */
+  userId: string;
+  /** 目标会员等级 */
+  targetTier: string;
+  /** 会员到期时间（可选，null表示不更新） */
+  membershipExpiresAt?: Date | null;
+  /** 幂等键（可选，用于防止重复操作） */
+  idempotencyKey?: string;
+  /** 元数据（可选，存储额外信息） */
+  metadata?: Record<string, any>;
+  /** 事务上下文（可选，用于事务透传） */
+  txn?: any;
+}
+
+/**
+ * 降级会员等级参数
+ * 用于调用 downgradeTier 方法
+ */
+export interface DowngradeTierParams {
+  /** 用户 ID */
+  userId: string;
+  /** 目标会员等级 */
+  targetTier: string;
+  /** 是否清除会员到期时间（可选，默认false） */
+  clearExpiration?: boolean;
+  /** 幂等键（可选，用于防止重复操作） */
+  idempotencyKey?: string;
+  /** 元数据（可选，存储额外信息） */
+  metadata?: Record<string, any>;
+  /** 事务上下文（可选，用于事务透传） */
+  txn?: any;
+}
+
+/**
+ * 等级变更结果
+ * upgradeTier 和 downgradeTier 方法的返回值
+ */
+export interface TierChangeResult {
+  /** 操作是否成功 */
+  success: true;
+  /** 交易 ID */
+  transactionId: string;
+  /** 旧会员等级 */
+  oldTier: string | null;
+  /** 新会员等级 */
+  newTier: string;
+  /** 旧积分余额 */
+  oldCredits: number;
+  /** 新积分余额 */
+  newCredits: number;
+  /** 积分变动量 */
+  creditsDelta: number;
 }

@@ -153,6 +153,12 @@ const validConfig: CreditsConfig = {
     requirements: {
       'generate-post': null,
       'generate-image': 'premium'
+    },
+    creditsCaps: {
+      free: 100,
+      basic: 500,
+      premium: 2000,
+      enterprise: 10000
     }
   },
   retry: {

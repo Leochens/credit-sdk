@@ -246,6 +246,53 @@ export class MockAdapter implements IStorageAdapter {
     return filtered.map(t => ({ ...t }));
   }
 
+  /**
+   * 更新用户会员等级和积分
+   * 
+   * 在单个原子操作中同时更新用户的会员等级、积分余额和会员到期时间。
+   * 
+   * @param userId - 用户唯一标识符
+   * @param membershipTier - 新的会员等级
+   * @param credits - 新的积分余额
+   * @param membershipExpiresAt - 会员到期时间（可选）
+   *   - 如果提供 Date 对象，则更新到期时间为该值
+   *   - 如果提供 null，则清除到期时间（设置为 null）
+   *   - 如果不提供（undefined），则保持现有到期时间不变
+   * @param _txn - 可选的事务上下文（在 MockAdapter 中不使用，但保持接口一致）
+   * @returns 更新后的用户对象
+   * @throws UserNotFoundError 如果用户不存在
+   */
+  async updateUserMembership(
+    userId: string,
+    membershipTier: string,
+    credits: number,
+    membershipExpiresAt?: Date | null,
+    _txn?: any
+  ): Promise<User> {
+    const user = this.users.get(userId);
+    
+    if (!user) {
+      throw new UserNotFoundError(userId);
+    }
+
+    // 在单个原子操作中更新所有字段
+    user.membershipTier = membershipTier;
+    user.credits = credits;
+    
+    // 处理会员到期时间
+    // undefined: 不修改现有值
+    // null: 清除到期时间
+    // Date: 设置为指定日期
+    if (membershipExpiresAt !== undefined) {
+      user.membershipExpiresAt = membershipExpiresAt;
+    }
+    
+    // 更新时间戳
+    user.updatedAt = new Date();
+
+    return { ...user }; // 返回副本
+  }
+
   // ==================== 测试辅助方法 ====================
 
   /**

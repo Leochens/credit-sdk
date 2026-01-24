@@ -72,7 +72,7 @@ costs: {
 
 ## Membership Configuration
 
-Define membership tiers and access requirements.
+Define membership tiers, access requirements, and credit caps.
 
 ### Tier Hierarchy
 
@@ -92,6 +92,62 @@ membership: {
 - Tier values must be numbers
 - Higher numbers represent higher tiers
 - Users with higher tiers can access features requiring lower tiers
+
+### Credit Caps
+
+Each membership tier can have a maximum credit balance (credit cap). When a user is upgraded or downgraded, their credits are automatically set to the new tier's cap.
+
+```typescript
+membership: {
+  tiers: {
+    free: 0,
+    basic: 1,
+    premium: 2,
+    enterprise: 3
+  },
+  creditsCaps: {
+    free: 100,        // Free users get 100 credits
+    basic: 500,       // Basic users get 500 credits
+    premium: 2000,    // Premium users get 2000 credits
+    enterprise: 10000 // Enterprise users get 10000 credits
+  }
+}
+```
+
+**Rules:**
+- Every tier defined in `tiers` must have a corresponding entry in `creditsCaps`
+- Credit caps must be non-negative numbers
+- Credit caps are applied automatically during tier upgrades and downgrades
+
+**Example Use Cases:**
+
+**Generous Free Tier:**
+```typescript
+creditsCaps: {
+  free: 1000,
+  premium: 5000,
+  enterprise: 50000
+}
+```
+
+**Strict Free Tier:**
+```typescript
+creditsCaps: {
+  free: 50,
+  premium: 1000,
+  enterprise: 10000
+}
+```
+
+**Equal Starting Point:**
+```typescript
+creditsCaps: {
+  free: 100,
+  basic: 100,    // Same as free, but different pricing
+  premium: 500,
+  enterprise: 2000
+}
+```
 
 ### Access Requirements
 
@@ -128,6 +184,13 @@ membership: {
     business: 3,
     enterprise: 4
   },
+  creditsCaps: {
+    free: 100,
+    starter: 500,
+    professional: 2000,
+    business: 5000,
+    enterprise: 20000
+  },
   requirements: {
     // Free tier features
     'basic-search': null,
@@ -151,6 +214,46 @@ membership: {
   }
 }
 ```
+
+### Tier Management Operations
+
+The SDK provides methods to upgrade and downgrade user membership tiers:
+
+**Upgrading a User:**
+```typescript
+const result = await engine.upgradeTier({
+  userId: 'user-123',
+  targetTier: 'premium',
+  membershipExpiresAt: new Date('2025-12-31'),
+  metadata: { reason: 'Annual subscription' }
+});
+
+// User's tier is now 'premium'
+// User's credits are now set to creditsCaps.premium (2000)
+```
+
+**Downgrading a User:**
+```typescript
+const result = await engine.downgradeTier({
+  userId: 'user-123',
+  targetTier: 'free',
+  clearExpiration: true,
+  metadata: { reason: 'Subscription expired' }
+});
+
+// User's tier is now 'free'
+// User's credits are now set to creditsCaps.free (100)
+// membershipExpiresAt is cleared
+```
+
+**Key Behaviors:**
+- Credits are automatically set to the target tier's cap
+- Excess credits are lost on downgrade
+- Membership expiration can be set on upgrade
+- Membership expiration can be cleared on downgrade
+- All operations are logged in audit trail
+- Operations support idempotency keys
+- Operations can be executed within transactions
 
 ## Retry Configuration
 
@@ -421,6 +524,12 @@ const engine = new CreditsEngine({
         starter: 1,
         professional: 2,
         enterprise: 3
+      },
+      creditsCaps: {
+        free: 100,
+        starter: 500,
+        professional: 2000,
+        enterprise: 10000
       },
       requirements: {
         // Free tier

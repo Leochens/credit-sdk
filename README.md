@@ -304,6 +304,21 @@ npm test
 npm run build
 ```
 
+### Local Development
+
+To use this SDK in another local project for testing:
+
+```bash
+# In credit-sdk directory
+npm run build
+npm link
+
+# In your project directory
+npm link credit-sdk
+```
+
+See [Local Development Guide](LOCAL_DEVELOPMENT.md) for detailed instructions.
+
 ## 📄 License
 
 MIT License - see [LICENSE](LICENSE) file for details

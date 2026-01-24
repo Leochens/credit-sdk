@@ -433,6 +433,198 @@ describe('PrismaAdapter', () => {
     });
   });
 
+  describe('updateUserMembership', () => {
+    it('应该成功更新用户会员等级和积分', async () => {
+      const mockUser = {
+        id: 'user-123',
+        credits: 1000,
+        membershipTier: 'pro',
+        membershipExpiresAt: null,
+        createdAt: new Date('2024-01-01'),
+        updatedAt: new Date('2024-01-15')
+      };
+
+      mockPrismaClient.user.update.mockResolvedValue(mockUser);
+
+      const result = await adapter.updateUserMembership(
+        'user-123',
+        'pro',
+        1000
+      );
+
+      expect(result).toEqual(mockUser);
+      expect(mockPrismaClient.user.update).toHaveBeenCalledWith({
+        where: { id: 'user-123' },
+        data: {
+          membershipTier: 'pro',
+          credits: 1000
+        }
+      });
+    });
+
+    it('应该更新会员到期时间（当提供时）', async () => {
+      const expiresAt = new Date('2025-12-31');
+      const mockUser = {
+        id: 'user-123',
+        credits: 1000,
+        membershipTier: 'pro',
+        membershipExpiresAt: expiresAt,
+        createdAt: new Date('2024-01-01'),
+        updatedAt: new Date('2024-01-15')
+      };
+
+      mockPrismaClient.user.update.mockResolvedValue(mockUser);
+
+      const result = await adapter.updateUserMembership(
+        'user-123',
+        'pro',
+        1000,
+        expiresAt
+      );
+
+      expect(result.membershipExpiresAt).toEqual(expiresAt);
+      expect(mockPrismaClient.user.update).toHaveBeenCalledWith({
+        where: { id: 'user-123' },
+        data: {
+          membershipTier: 'pro',
+          credits: 1000,
+          membershipExpiresAt: expiresAt
+        }
+      });
+    });
+
+    it('应该清除会员到期时间（当传入 null 时）', async () => {
+      const mockUser = {
+        id: 'user-123',
+        credits: 100,
+        membershipTier: 'free',
+        membershipExpiresAt: null,
+        createdAt: new Date('2024-01-01'),
+        updatedAt: new Date('2024-01-15')
+      };
+
+      mockPrismaClient.user.update.mockResolvedValue(mockUser);
+
+      const result = await adapter.updateUserMembership(
+        'user-123',
+        'free',
+        100,
+        null
+      );
+
+      expect(result.membershipExpiresAt).toBeNull();
+      expect(mockPrismaClient.user.update).toHaveBeenCalledWith({
+        where: { id: 'user-123' },
+        data: {
+          membershipTier: 'free',
+          credits: 100,
+          membershipExpiresAt: null
+        }
+      });
+    });
+
+    it('应该保持现有到期时间不变（当未提供时）', async () => {
+      const existingExpiresAt = new Date('2025-06-30');
+      const mockUser = {
+        id: 'user-123',
+        credits: 1000,
+        membershipTier: 'pro',
+        membershipExpiresAt: existingExpiresAt,
+        createdAt: new Date('2024-01-01'),
+        updatedAt: new Date('2024-01-15')
+      };
+
+      mockPrismaClient.user.update.mockResolvedValue(mockUser);
+
+      await adapter.updateUserMembership(
+        'user-123',
+        'pro',
+        1000
+        // 注意：不传递 membershipExpiresAt 参数
+      );
+
+      // 验证 updateData 中不包含 membershipExpiresAt
+      expect(mockPrismaClient.user.update).toHaveBeenCalledWith({
+        where: { id: 'user-123' },
+        data: {
+          membershipTier: 'pro',
+          credits: 1000
+          // membershipExpiresAt 不应该在这里
+        }
+      });
+    });
+
+    it('应该在用户不存在时抛出 UserNotFoundError', async () => {
+      const prismaError = {
+        code: 'P2025',
+        message: 'Record not found'
+      };
+
+      mockPrismaClient.user.update.mockRejectedValue(prismaError);
+
+      await expect(
+        adapter.updateUserMembership('nonexistent', 'pro', 1000)
+      ).rejects.toThrow(UserNotFoundError);
+    });
+
+    it('应该使用事务上下文', async () => {
+      const mockTxn = {
+        user: {
+          update: vi.fn().mockResolvedValue({
+            id: 'user-123',
+            credits: 1000,
+            membershipTier: 'pro',
+            membershipExpiresAt: null,
+            createdAt: new Date(),
+            updatedAt: new Date()
+          })
+        }
+      };
+
+      await adapter.updateUserMembership(
+        'user-123',
+        'pro',
+        1000,
+        undefined,
+        mockTxn
+      );
+
+      expect(mockTxn.user.update).toHaveBeenCalled();
+      expect(mockPrismaClient.user.update).not.toHaveBeenCalled();
+    });
+
+    it('应该在单个原子操作中同时更新等级和积分', async () => {
+      const mockUser = {
+        id: 'user-123',
+        credits: 10000,
+        membershipTier: 'premium',
+        membershipExpiresAt: new Date('2025-12-31'),
+        createdAt: new Date('2024-01-01'),
+        updatedAt: new Date('2024-01-15')
+      };
+
+      mockPrismaClient.user.update.mockResolvedValue(mockUser);
+
+      await adapter.updateUserMembership(
+        'user-123',
+        'premium',
+        10000,
+        new Date('2025-12-31')
+      );
+
+      // 验证只调用了一次 update，并且同时更新了所有字段
+      expect(mockPrismaClient.user.update).toHaveBeenCalledTimes(1);
+      expect(mockPrismaClient.user.update).toHaveBeenCalledWith({
+        where: { id: 'user-123' },
+        data: {
+          membershipTier: 'premium',
+          credits: 10000,
+          membershipExpiresAt: new Date('2025-12-31')
+        }
+      });
+    });
+  });
+
   describe('错误处理', () => {
     it('应该处理 Prisma 唯一约束冲突错误', async () => {
       const prismaError = {

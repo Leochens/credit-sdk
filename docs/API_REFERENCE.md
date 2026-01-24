@@ -215,6 +215,73 @@ try {
 }
 ```
 
+#### upgradeTier(params: UpgradeTierParams): Promise<TierChangeResult>
+
+Upgrade a user's membership tier and set credits to the target tier's cap.
+
+**Parameters:**
+- `userId`: string - User ID
+- `targetTier`: string - Target membership tier
+- `membershipExpiresAt?`: Date | null - Optional membership expiration date
+- `idempotencyKey?`: string - Optional idempotency key
+- `metadata?`: object - Optional metadata
+- `txn?`: any - Optional transaction context
+
+**Returns:** TierChangeResult with tier change details
+
+**Throws:**
+- `UserNotFoundError` - User does not exist
+- `UndefinedTierError` - Target tier is not defined in configuration
+- `InvalidTierChangeError` - Target tier is not higher than current tier
+
+**Example:**
+
+```typescript
+const result = await engine.upgradeTier({
+  userId: 'user-123',
+  targetTier: 'premium',
+  membershipExpiresAt: new Date('2025-12-31'),
+  metadata: { reason: 'Annual subscription purchase' }
+});
+
+console.log(`Upgraded from ${result.oldTier} to ${result.newTier}`);
+console.log(`Credits changed from ${result.oldCredits} to ${result.newCredits}`);
+console.log(`Credit delta: ${result.creditsDelta}`);
+```
+
+#### downgradeTier(params: DowngradeTierParams): Promise<TierChangeResult>
+
+Downgrade a user's membership tier and set credits to the target tier's cap.
+
+**Parameters:**
+- `userId`: string - User ID
+- `targetTier`: string - Target membership tier
+- `clearExpiration?`: boolean - Whether to clear membership expiration date (default: false)
+- `idempotencyKey?`: string - Optional idempotency key
+- `metadata?`: object - Optional metadata
+- `txn?`: any - Optional transaction context
+
+**Returns:** TierChangeResult with tier change details
+
+**Throws:**
+- `UserNotFoundError` - User does not exist
+- `UndefinedTierError` - Target tier is not defined in configuration
+- `InvalidTierChangeError` - Target tier is not lower than current tier
+
+**Example:**
+
+```typescript
+const result = await engine.downgradeTier({
+  userId: 'user-123',
+  targetTier: 'free',
+  clearExpiration: true,
+  metadata: { reason: 'Subscription expired' }
+});
+
+console.log(`Downgraded from ${result.oldTier} to ${result.newTier}`);
+console.log(`Credits adjusted from ${result.oldCredits} to ${result.newCredits}`);
+```
+
 ## Error Types
 
 All errors extend `CreditsSDKError` and include a `code` property.
@@ -273,6 +340,49 @@ Thrown when action has no defined cost.
 **Properties:**
 - `action`: string
 - `code`: 'UNDEFINED_ACTION'
+
+### InvalidTierChangeError
+
+Thrown when attempting an invalid tier change (e.g., upgrading to a lower tier).
+
+**Properties:**
+- `userId`: string
+- `currentTier`: string | null - Current tier
+- `targetTier`: string - Target tier
+- `reason`: string - Reason for invalidity
+- `code`: 'INVALID_TIER_CHANGE'
+
+**Example:**
+
+```typescript
+try {
+  await engine.upgradeTier({ userId, targetTier: 'free' });
+} catch (error) {
+  if (error instanceof InvalidTierChangeError) {
+    console.log(`Cannot change from ${error.currentTier} to ${error.targetTier}: ${error.reason}`);
+  }
+}
+```
+
+### UndefinedTierError
+
+Thrown when a tier is not defined in the configuration.
+
+**Properties:**
+- `tier`: string - The undefined tier
+- `code`: 'UNDEFINED_TIER'
+
+**Example:**
+
+```typescript
+try {
+  await engine.upgradeTier({ userId, targetTier: 'platinum' });
+} catch (error) {
+  if (error instanceof UndefinedTierError) {
+    console.log(`Tier '${error.tier}' is not configured`);
+  }
+}
+```
 
 ## Type Definitions
 
@@ -388,6 +498,9 @@ interface CreditsConfig {
     requirements: {
       [action: string]: string | null;
     };
+    creditsCaps: {
+      [tier: string]: number;
+    };
   };
   retry?: {
     enabled: boolean;
@@ -405,3 +518,44 @@ interface CreditsConfig {
   };
 }
 ```
+
+### UpgradeTierParams
+
+```typescript
+interface UpgradeTierParams {
+  userId: string;
+  targetTier: string;
+  membershipExpiresAt?: Date | null;
+  idempotencyKey?: string;
+  metadata?: Record<string, any>;
+  txn?: any;
+}
+```
+
+### DowngradeTierParams
+
+```typescript
+interface DowngradeTierParams {
+  userId: string;
+  targetTier: string;
+  clearExpiration?: boolean;
+  idempotencyKey?: string;
+  metadata?: Record<string, any>;
+  txn?: any;
+}
+```
+
+### TierChangeResult
+
+```typescript
+interface TierChangeResult {
+  success: true;
+  transactionId: string;
+  oldTier: string | null;
+  newTier: string;
+  oldCredits: number;
+  newCredits: number;
+  creditsDelta: number;
+}
+```
+

@@ -174,4 +174,79 @@ export interface IStorageAdapter {
     },
     txn?: any
   ): Promise<Transaction[]>;
+
+  /**
+   * 更新用户会员等级和积分
+   * 
+   * 此方法在单个原子操作中同时更新用户的会员等级、积分余额和会员到期时间。
+   * 这确保了数据一致性，防止部分更新导致的数据不一致问题。
+   * 
+   * @param userId - 用户唯一标识符
+   * @param membershipTier - 新的会员等级
+   * @param credits - 新的积分余额
+   * @param membershipExpiresAt - 会员到期时间（可选）
+   *   - 如果提供 Date 对象，则更新到期时间为该值
+   *   - 如果提供 null，则清除到期时间（设置为 null）
+   *   - 如果不提供（undefined），则保持现有到期时间不变
+   * @param txn - 可选的事务上下文，用于在事务中执行更新
+   * @returns 更新后的用户对象
+   * @throws 如果用户不存在应该抛出错误
+   * 
+   * 实现注意事项：
+   * - 必须在单个原子操作中更新所有字段，确保数据一致性
+   * - 必须更新 updatedAt 时间戳
+   * - 如果用户不存在，必须抛出错误（不应创建新用户）
+   * - 支持事务上下文，确保可以与其他操作组合成原子事务
+   * - membershipExpiresAt 参数的处理：
+   *   - undefined: 不修改现有值
+   *   - null: 清除到期时间
+   *   - Date: 设置为指定日期
+   * 
+   * @example
+   * // 升级用户到 pro 等级，设置积分为 1000，并设置到期时间
+   * const user = await adapter.updateUserMembership(
+   *   'user-123',
+   *   'pro',
+   *   1000,
+   *   new Date('2025-12-31')
+   * );
+   * 
+   * @example
+   * // 降级用户到 free 等级，设置积分为 100，清除到期时间
+   * const user = await adapter.updateUserMembership(
+   *   'user-123',
+   *   'free',
+   *   100,
+   *   null
+   * );
+   * 
+   * @example
+   * // 更新等级和积分，但保持现有到期时间不变
+   * const user = await adapter.updateUserMembership(
+   *   'user-123',
+   *   'premium',
+   *   10000
+   * );
+   * 
+   * @example
+   * // 在事务中更新会员信息
+   * const txn = await prisma.$transaction(async (tx) => {
+   *   const user = await adapter.updateUserMembership(
+   *     'user-123',
+   *     'pro',
+   *     1000,
+   *     new Date('2025-12-31'),
+   *     tx
+   *   );
+   *   // 其他事务操作...
+   *   return user;
+   * });
+   */
+  updateUserMembership(
+    userId: string,
+    membershipTier: string,
+    credits: number,
+    membershipExpiresAt?: Date | null,
+    txn?: any
+  ): Promise<User>;
 }

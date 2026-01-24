@@ -311,6 +311,142 @@ describe('MockAdapter', () => {
     });
   });
 
+  describe('updateUserMembership', () => {
+    it('should throw UserNotFoundError for non-existent user', async () => {
+      await expect(
+        adapter.updateUserMembership('non-existent', 'premium', 1000)
+      ).rejects.toThrow(UserNotFoundError);
+    });
+
+    it('should update membership tier and credits', async () => {
+      await adapter.createUser({
+        id: 'user-123',
+        credits: 100,
+        membershipTier: 'free'
+      });
+
+      const updated = await adapter.updateUserMembership('user-123', 'premium', 1000);
+      
+      expect(updated.membershipTier).toBe('premium');
+      expect(updated.credits).toBe(1000);
+    });
+
+    it('should update membership expiration when provided as Date', async () => {
+      await adapter.createUser({
+        id: 'user-123',
+        credits: 100,
+        membershipTier: 'free',
+        membershipExpiresAt: null
+      });
+
+      const expiresAt = new Date('2025-12-31');
+      const updated = await adapter.updateUserMembership(
+        'user-123',
+        'premium',
+        1000,
+        expiresAt
+      );
+      
+      expect(updated.membershipExpiresAt).toEqual(expiresAt);
+    });
+
+    it('should clear membership expiration when provided as null', async () => {
+      await adapter.createUser({
+        id: 'user-123',
+        credits: 1000,
+        membershipTier: 'premium',
+        membershipExpiresAt: new Date('2025-12-31')
+      });
+
+      const updated = await adapter.updateUserMembership(
+        'user-123',
+        'free',
+        100,
+        null
+      );
+      
+      expect(updated.membershipExpiresAt).toBeNull();
+    });
+
+    it('should keep existing expiration when not provided', async () => {
+      const existingExpiration = new Date('2025-12-31');
+      await adapter.createUser({
+        id: 'user-123',
+        credits: 100,
+        membershipTier: 'free',
+        membershipExpiresAt: existingExpiration
+      });
+
+      const updated = await adapter.updateUserMembership(
+        'user-123',
+        'pro',
+        500
+      );
+      
+      expect(updated.membershipExpiresAt).toEqual(existingExpiration);
+    });
+
+    it('should update the updatedAt timestamp', async () => {
+      const oldDate = new Date('2024-01-01');
+      await adapter.createUser({
+        id: 'user-123',
+        credits: 100,
+        membershipTier: 'free',
+        updatedAt: oldDate
+      });
+
+      // 等待一小段时间确保时间戳不同
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      const updated = await adapter.updateUserMembership('user-123', 'premium', 1000);
+      expect(updated.updatedAt.getTime()).toBeGreaterThan(oldDate.getTime());
+    });
+
+    it('should update all fields atomically', async () => {
+      await adapter.createUser({
+        id: 'user-123',
+        credits: 100,
+        membershipTier: 'free',
+        membershipExpiresAt: null
+      });
+
+      const expiresAt = new Date('2025-12-31');
+      const updated = await adapter.updateUserMembership(
+        'user-123',
+        'premium',
+        1000,
+        expiresAt
+      );
+      
+      // 验证所有字段都已更新
+      expect(updated.membershipTier).toBe('premium');
+      expect(updated.credits).toBe(1000);
+      expect(updated.membershipExpiresAt).toEqual(expiresAt);
+      
+      // 验证内部存储也已更新
+      const retrieved = await adapter.getUserById('user-123');
+      expect(retrieved!.membershipTier).toBe('premium');
+      expect(retrieved!.credits).toBe(1000);
+      expect(retrieved!.membershipExpiresAt).toEqual(expiresAt);
+    });
+
+    it('should return a copy of the user object', async () => {
+      await adapter.createUser({
+        id: 'user-123',
+        credits: 100,
+        membershipTier: 'free'
+      });
+
+      const updated = await adapter.updateUserMembership('user-123', 'premium', 1000);
+      
+      // 修改返回的副本不应该影响内部存储
+      updated.credits = 500;
+      
+      const retrieved = await adapter.getUserById('user-123');
+      expect(retrieved!.credits).toBe(1000);
+    });
+  });
+
   describe('getTransactions', () => {
     beforeEach(async () => {
       // 创建测试数据
@@ -685,6 +821,7 @@ describe('MockAdapter', () => {
       // 所有方法都应该接受 txn 参数而不报错
       await expect(adapter.getUserById('user-123', mockTxn)).resolves.not.toThrow();
       await expect(adapter.updateUserCredits('user-123', 10, mockTxn)).resolves.not.toThrow();
+      await expect(adapter.updateUserMembership('user-123', 'premium', 1000, new Date(), mockTxn)).resolves.not.toThrow();
       await expect(adapter.createTransaction({
         userId: 'user-123',
         action: 'test',

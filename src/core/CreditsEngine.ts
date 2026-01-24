@@ -15,6 +15,9 @@ import {
   RefundResult,
   GrantParams,
   GrantResult,
+  UpgradeTierParams,
+  DowngradeTierParams,
+  TierChangeResult,
   Transaction,
   HistoryOptions
 } from './types';
@@ -29,7 +32,9 @@ import {
   ConfigurationError,
   UserNotFoundError,
   MembershipRequiredError,
-  InsufficientCreditsError
+  InsufficientCreditsError,
+  UndefinedTierError,
+  InvalidTierChangeError
 } from './errors';
 
 /**
@@ -273,6 +278,30 @@ export class CreditsEngine {
       if (level < 0) {
         throw new ConfigurationError(
           `Membership tier '${tier}' level must be non-negative`
+        );
+      }
+    }
+
+    // 验证积分上限配置
+    if (!config.membership.creditsCaps || 
+        typeof config.membership.creditsCaps !== 'object') {
+      throw new ConfigurationError(
+        'Membership configuration must include creditsCaps'
+      );
+    }
+
+    // 验证每个等级都有对应的积分上限
+    for (const tier of Object.keys(config.membership.tiers)) {
+      if (!(tier in config.membership.creditsCaps)) {
+        throw new ConfigurationError(
+          `Missing credits cap for tier '${tier}'`
+        );
+      }
+
+      const cap = config.membership.creditsCaps[tier];
+      if (typeof cap !== 'number' || cap < 0) {
+        throw new ConfigurationError(
+          `Credits cap for tier '${tier}' must be a non-negative number`
         );
       }
     }
@@ -1014,6 +1043,625 @@ export class CreditsEngine {
         userId,
         action,
         amount,
+        error: error instanceof Error ? error.message : String(error)
+      });
+
+      // 重新抛出原始错误
+      throw error;
+    }
+  }
+
+  /**
+   * 升级会员等级
+   * 
+   * 执行会员升级流程：
+   * 1. 幂等性检查 - 如果提供了幂等键且操作已执行，返回缓存结果
+   * 2. 用户验证 - 检查用户是否存在
+   * 3. 目标等级验证 - 检查目标等级是否在配置中定义
+   * 4. 升级方向验证 - 确保目标等级高于当前等级
+   * 5. 等级和积分更新 - 更新用户等级并设置积分为目标等级的上限
+   * 6. 交易记录创建 - 创建交易记录以记录积分变动
+   * 7. 审计日志记录 - 记录操作详情
+   * 8. 幂等记录保存 - 保存结果用于后续幂等性检查
+   * 
+   * 所有操作在事务中执行（如果提供了事务上下文）或自动提交。
+   * 任何步骤失败都会导致整个操作回滚（在事务中）。
+   * 
+   * @param params - 升级参数
+   * @returns 等级变更结果
+   * @throws {UserNotFoundError} 当用户不存在时
+   * @throws {UndefinedTierError} 当目标等级未在配置中定义时
+   * @throws {InvalidTierChangeError} 当目标等级不高于当前等级时
+   * 
+   * @example
+   * ```typescript
+   * // 基本升级
+   * const result = await engine.upgradeTier({
+   *   userId: 'user-123',
+   *   targetTier: 'premium'
+   * });
+   * 
+   * // 带会员到期时间的升级
+   * const result = await engine.upgradeTier({
+   *   userId: 'user-123',
+   *   targetTier: 'premium',
+   *   membershipExpiresAt: new Date('2025-12-31')
+   * });
+   * 
+   * // 带幂等键的升级
+   * const result = await engine.upgradeTier({
+   *   userId: 'user-123',
+   *   targetTier: 'premium',
+   *   idempotencyKey: 'upgrade-unique-key-123'
+   * });
+   * 
+   * // 在事务中升级
+   * await prisma.$transaction(async (tx) => {
+   *   const result = await engine.upgradeTier({
+   *     userId: 'user-123',
+   *     targetTier: 'premium',
+   *     txn: tx
+   *   });
+   *   // ... 其他操作 ...
+   * });
+   * ```
+   * 
+   * 验证需求:
+   * - 1.1: 验证目标等级高于当前等级
+   * - 1.2: 更新用户的会员等级字段为目标等级
+   * - 1.3: 将用户积分设置为目标等级的预设积分上限
+   * - 1.4: 创建交易记录以记录积分变动
+   * - 1.5: 创建审计日志记录操作详情
+   * - 1.6: 目标等级不存在于配置中时抛出配置错误
+   * - 1.7: 目标等级不高于当前等级时抛出验证错误
+   * - 1.8: 用户不存在时抛出用户不存在错误
+   */
+  async upgradeTier(params: UpgradeTierParams): Promise<TierChangeResult> {
+    const { userId, targetTier, membershipExpiresAt, idempotencyKey, metadata = {}, txn } = params;
+
+    this.logger.info('Starting upgradeTier operation', {
+      userId,
+      targetTier,
+      hasMembershipExpiresAt: membershipExpiresAt !== undefined,
+      hasIdempotencyKey: !!idempotencyKey,
+      hasTransaction: !!txn
+    });
+
+    try {
+      // 步骤 1: 幂等性检查
+      if (idempotencyKey) {
+        this.logger.debug('Checking idempotency', { idempotencyKey });
+        const existingRecord = await this.idempotencyManager.check(idempotencyKey, txn);
+        
+        if (existingRecord) {
+          this.logger.info('Idempotency key found, returning cached result', {
+            idempotencyKey,
+            userId
+          });
+          return existingRecord.result as TierChangeResult;
+        }
+      }
+
+      // 步骤 2: 获取用户信息
+      this.logger.debug('Fetching user', { userId });
+      const user = await this.storage.getUserById(userId, txn);
+      
+      if (!user) {
+        this.logger.warn('User not found', { userId });
+        throw new UserNotFoundError(userId);
+      }
+
+      this.logger.debug('User found', {
+        userId,
+        credits: user.credits,
+        membershipTier: user.membershipTier
+      });
+
+      // 步骤 3: 验证目标等级存在
+      if (!(targetTier in this.config.membership.tiers)) {
+        this.logger.warn('Target tier not defined', { targetTier });
+        throw new UndefinedTierError(targetTier);
+      }
+
+      this.logger.debug('Target tier validated', { targetTier });
+
+      // 步骤 4: 验证升级方向
+      const currentLevel = user.membershipTier 
+        ? (this.config.membership.tiers[user.membershipTier] ?? -1)
+        : -1;
+      const targetLevel = this.config.membership.tiers[targetTier];
+      
+      // TypeScript 类型保护：确保 targetLevel 已定义
+      if (targetLevel === undefined) {
+        throw new UndefinedTierError(targetTier);
+      }
+      
+      if (targetLevel <= currentLevel) {
+        this.logger.warn('Invalid upgrade direction', {
+          userId,
+          currentTier: user.membershipTier,
+          currentLevel,
+          targetTier,
+          targetLevel
+        });
+
+        throw new InvalidTierChangeError(
+          userId, 
+          user.membershipTier, 
+          targetTier,
+          'Target tier must be higher than current tier for upgrade'
+        );
+      }
+
+      this.logger.debug('Upgrade direction validated', {
+        currentLevel,
+        targetLevel
+      });
+
+      // 步骤 5: 获取目标等级的积分上限
+      const newCredits = this.config.membership.creditsCaps[targetTier];
+      
+      // TypeScript 类型保护：确保 newCredits 已定义
+      if (newCredits === undefined) {
+        throw new UndefinedTierError(targetTier);
+      }
+      
+      this.logger.debug('Credits cap retrieved', {
+        targetTier,
+        newCredits
+      });
+
+      // 步骤 6: 更新用户等级和积分
+      const balanceBefore = user.credits;
+      const creditsDelta = newCredits - balanceBefore;
+
+      this.logger.debug('Updating user membership', {
+        userId,
+        targetTier,
+        newCredits,
+        balanceBefore,
+        creditsDelta,
+        membershipExpiresAt
+      });
+
+      await this.storage.updateUserMembership(
+        userId,
+        targetTier,
+        newCredits,
+        membershipExpiresAt,
+        txn
+      );
+
+      this.logger.debug('User membership updated', { userId });
+
+      // 步骤 7: 创建交易记录
+      this.logger.debug('Creating transaction record', {
+        userId,
+        action: 'tier-upgrade',
+        creditsDelta
+      });
+
+      const transaction = await this.storage.createTransaction(
+        {
+          userId,
+          action: 'tier-upgrade',
+          amount: creditsDelta,
+          balanceBefore,
+          balanceAfter: newCredits,
+          metadata: {
+            oldTier: user.membershipTier,
+            newTier: targetTier,
+            oldCredits: balanceBefore,
+            newCredits,
+            creditsDelta,
+            membershipExpiresAt,
+            ...metadata
+          }
+        },
+        txn
+      );
+
+      this.logger.debug('Transaction record created', {
+        transactionId: transaction.id
+      });
+
+      // 步骤 8: 创建审计日志
+      if (this.config.audit.enabled) {
+        this.logger.debug('Creating audit log', { userId, action: 'upgradeTier' });
+
+        await this.auditTrail.log(
+          {
+            userId,
+            action: 'upgradeTier',
+            status: 'success',
+            metadata: {
+              oldTier: user.membershipTier,
+              newTier: targetTier,
+              oldCredits: balanceBefore,
+              newCredits,
+              creditsDelta,
+              transactionId: transaction.id,
+              membershipExpiresAt,
+              ...metadata
+            }
+          },
+          txn
+        );
+
+        this.logger.debug('Audit log created', { userId });
+      }
+
+      // 构建结果
+      const result: TierChangeResult = {
+        success: true,
+        transactionId: transaction.id,
+        oldTier: user.membershipTier,
+        newTier: targetTier,
+        oldCredits: balanceBefore,
+        newCredits,
+        creditsDelta
+      };
+
+      // 步骤 9: 保存幂等记录
+      if (idempotencyKey) {
+        this.logger.debug('Saving idempotency record', { idempotencyKey });
+        await this.idempotencyManager.save(idempotencyKey, result, txn);
+      }
+
+      this.logger.info('UpgradeTier operation completed successfully', {
+        userId,
+        oldTier: user.membershipTier,
+        newTier: targetTier,
+        creditsDelta,
+        transactionId: transaction.id
+      });
+
+      return result;
+
+    } catch (error) {
+      // 记录失败的审计日志
+      if (this.config.audit.enabled) {
+        try {
+          await this.auditTrail.log(
+            {
+              userId,
+              action: 'upgradeTier',
+              status: 'failed',
+              metadata: {
+                targetTier,
+                error: error instanceof Error ? error.message : String(error),
+                ...metadata
+              },
+              errorMessage: error instanceof Error ? error.message : String(error)
+            },
+            txn
+          );
+        } catch (auditError) {
+          // 如果审计日志记录失败，只记录警告，不影响主错误的抛出
+          this.logger.warn('Failed to create audit log for failed operation', {
+            userId,
+            action: 'upgradeTier',
+            error: auditError
+          });
+        }
+      }
+
+      this.logger.error('UpgradeTier operation failed', {
+        userId,
+        targetTier,
+        error: error instanceof Error ? error.message : String(error)
+      });
+
+      // 重新抛出原始错误
+      throw error;
+    }
+  }
+
+  /**
+   * 降级会员等级
+   * 
+   * 执行会员降级流程：
+   * 1. 幂等性检查 - 如果提供了幂等键且操作已执行，返回缓存结果
+   * 2. 用户验证 - 检查用户是否存在
+   * 3. 目标等级验证 - 检查目标等级是否在配置中定义
+   * 4. 降级方向验证 - 确保目标等级低于当前等级
+   * 5. 等级和积分更新 - 更新用户等级并设置积分为目标等级的上限
+   * 6. 会员到期时间清除 - 如果指定，清除会员到期时间
+   * 7. 交易记录创建 - 创建交易记录以记录积分变动
+   * 8. 审计日志记录 - 记录操作详情
+   * 9. 幂等记录保存 - 保存结果用于后续幂等性检查
+   * 
+   * 所有操作在事务中执行（如果提供了事务上下文）或自动提交。
+   * 任何步骤失败都会导致整个操作回滚（在事务中）。
+   * 
+   * @param params - 降级参数
+   * @returns 等级变更结果
+   * @throws {UserNotFoundError} 当用户不存在时
+   * @throws {UndefinedTierError} 当目标等级未在配置中定义时
+   * @throws {InvalidTierChangeError} 当目标等级不低于当前等级时
+   * 
+   * @example
+   * ```typescript
+   * // 基本降级
+   * const result = await engine.downgradeTier({
+   *   userId: 'user-123',
+   *   targetTier: 'free'
+   * });
+   * 
+   * // 降级并清除会员到期时间
+   * const result = await engine.downgradeTier({
+   *   userId: 'user-123',
+   *   targetTier: 'free',
+   *   clearExpiration: true
+   * });
+   * 
+   * // 带幂等键的降级
+   * const result = await engine.downgradeTier({
+   *   userId: 'user-123',
+   *   targetTier: 'free',
+   *   idempotencyKey: 'downgrade-unique-key-123'
+   * });
+   * 
+   * // 在事务中降级
+   * await prisma.$transaction(async (tx) => {
+   *   const result = await engine.downgradeTier({
+   *     userId: 'user-123',
+   *     targetTier: 'free',
+   *     txn: tx
+   *   });
+   *   // ... 其他操作 ...
+   * });
+   * ```
+   * 
+   * 验证需求:
+   * - 2.1: 验证目标等级低于当前等级
+   * - 2.2: 更新用户的会员等级字段为目标等级
+   * - 2.3: 将用户积分设置为目标等级的预设积分上限
+   * - 2.4: 创建交易记录以记录积分变动
+   * - 2.5: 创建审计日志记录操作详情
+   * - 2.6: 目标等级不存在于配置中时抛出配置错误
+   * - 2.7: 目标等级不低于当前等级时抛出验证错误
+   * - 2.8: 用户不存在时抛出用户不存在错误
+   * - 6.3: 降级时可选地清除会员到期时间
+   */
+  async downgradeTier(params: DowngradeTierParams): Promise<TierChangeResult> {
+    const { userId, targetTier, clearExpiration = false, idempotencyKey, metadata = {}, txn } = params;
+
+    this.logger.info('Starting downgradeTier operation', {
+      userId,
+      targetTier,
+      clearExpiration,
+      hasIdempotencyKey: !!idempotencyKey,
+      hasTransaction: !!txn
+    });
+
+    try {
+      // 步骤 1: 幂等性检查
+      if (idempotencyKey) {
+        this.logger.debug('Checking idempotency', { idempotencyKey });
+        const existingRecord = await this.idempotencyManager.check(idempotencyKey, txn);
+        
+        if (existingRecord) {
+          this.logger.info('Idempotency key found, returning cached result', {
+            idempotencyKey,
+            userId
+          });
+          return existingRecord.result as TierChangeResult;
+        }
+      }
+
+      // 步骤 2: 获取用户信息
+      this.logger.debug('Fetching user', { userId });
+      const user = await this.storage.getUserById(userId, txn);
+      
+      if (!user) {
+        this.logger.warn('User not found', { userId });
+        throw new UserNotFoundError(userId);
+      }
+
+      this.logger.debug('User found', {
+        userId,
+        credits: user.credits,
+        membershipTier: user.membershipTier
+      });
+
+      // 步骤 3: 验证目标等级存在
+      if (!(targetTier in this.config.membership.tiers)) {
+        this.logger.warn('Target tier not defined', { targetTier });
+        throw new UndefinedTierError(targetTier);
+      }
+
+      this.logger.debug('Target tier validated', { targetTier });
+
+      // 步骤 4: 验证降级方向
+      const currentLevel = user.membershipTier 
+        ? (this.config.membership.tiers[user.membershipTier] ?? -1)
+        : -1;
+      const targetLevel = this.config.membership.tiers[targetTier];
+      
+      // TypeScript 类型保护：确保 targetLevel 已定义
+      if (targetLevel === undefined) {
+        throw new UndefinedTierError(targetTier);
+      }
+      
+      if (targetLevel >= currentLevel) {
+        this.logger.warn('Invalid downgrade direction', {
+          userId,
+          currentTier: user.membershipTier,
+          currentLevel,
+          targetTier,
+          targetLevel
+        });
+
+        throw new InvalidTierChangeError(
+          userId, 
+          user.membershipTier, 
+          targetTier,
+          'Target tier must be lower than current tier for downgrade'
+        );
+      }
+
+      this.logger.debug('Downgrade direction validated', {
+        currentLevel,
+        targetLevel
+      });
+
+      // 步骤 5: 获取目标等级的积分上限
+      const newCredits = this.config.membership.creditsCaps[targetTier];
+      
+      // TypeScript 类型保护：确保 newCredits 已定义
+      if (newCredits === undefined) {
+        throw new UndefinedTierError(targetTier);
+      }
+      
+      this.logger.debug('Credits cap retrieved', {
+        targetTier,
+        newCredits
+      });
+
+      // 步骤 6: 更新用户等级和积分
+      const balanceBefore = user.credits;
+      const creditsDelta = newCredits - balanceBefore;
+
+      // 确定会员到期时间：如果 clearExpiration 为 true，则设置为 null
+      const membershipExpiresAt = clearExpiration ? null : undefined;
+
+      this.logger.debug('Updating user membership', {
+        userId,
+        targetTier,
+        newCredits,
+        balanceBefore,
+        creditsDelta,
+        clearExpiration,
+        membershipExpiresAt
+      });
+
+      await this.storage.updateUserMembership(
+        userId,
+        targetTier,
+        newCredits,
+        membershipExpiresAt,
+        txn
+      );
+
+      this.logger.debug('User membership updated', { userId });
+
+      // 步骤 7: 创建交易记录
+      this.logger.debug('Creating transaction record', {
+        userId,
+        action: 'tier-downgrade',
+        creditsDelta
+      });
+
+      const transaction = await this.storage.createTransaction(
+        {
+          userId,
+          action: 'tier-downgrade',
+          amount: creditsDelta,
+          balanceBefore,
+          balanceAfter: newCredits,
+          metadata: {
+            oldTier: user.membershipTier,
+            newTier: targetTier,
+            oldCredits: balanceBefore,
+            newCredits,
+            creditsDelta,
+            clearExpiration,
+            ...metadata
+          }
+        },
+        txn
+      );
+
+      this.logger.debug('Transaction record created', {
+        transactionId: transaction.id
+      });
+
+      // 步骤 8: 创建审计日志
+      if (this.config.audit.enabled) {
+        this.logger.debug('Creating audit log', { userId, action: 'downgradeTier' });
+
+        await this.auditTrail.log(
+          {
+            userId,
+            action: 'downgradeTier',
+            status: 'success',
+            metadata: {
+              oldTier: user.membershipTier,
+              newTier: targetTier,
+              oldCredits: balanceBefore,
+              newCredits,
+              creditsDelta,
+              transactionId: transaction.id,
+              clearExpiration,
+              ...metadata
+            }
+          },
+          txn
+        );
+
+        this.logger.debug('Audit log created', { userId });
+      }
+
+      // 构建结果
+      const result: TierChangeResult = {
+        success: true,
+        transactionId: transaction.id,
+        oldTier: user.membershipTier,
+        newTier: targetTier,
+        oldCredits: balanceBefore,
+        newCredits,
+        creditsDelta
+      };
+
+      // 步骤 9: 保存幂等记录
+      if (idempotencyKey) {
+        this.logger.debug('Saving idempotency record', { idempotencyKey });
+        await this.idempotencyManager.save(idempotencyKey, result, txn);
+      }
+
+      this.logger.info('DowngradeTier operation completed successfully', {
+        userId,
+        oldTier: user.membershipTier,
+        newTier: targetTier,
+        creditsDelta,
+        transactionId: transaction.id
+      });
+
+      return result;
+
+    } catch (error) {
+      // 记录失败的审计日志
+      if (this.config.audit.enabled) {
+        try {
+          await this.auditTrail.log(
+            {
+              userId,
+              action: 'downgradeTier',
+              status: 'failed',
+              metadata: {
+                targetTier,
+                clearExpiration,
+                error: error instanceof Error ? error.message : String(error),
+                ...metadata
+              },
+              errorMessage: error instanceof Error ? error.message : String(error)
+            },
+            txn
+          );
+        } catch (auditError) {
+          // 如果审计日志记录失败，只记录警告，不影响主错误的抛出
+          this.logger.warn('Failed to create audit log for failed operation', {
+            userId,
+            action: 'downgradeTier',
+            error: auditError
+          });
+        }
+      }
+
+      this.logger.error('DowngradeTier operation failed', {
+        userId,
+        targetTier,
         error: error instanceof Error ? error.message : String(error)
       });
 

@@ -180,3 +180,59 @@ export class UndefinedActionError extends CreditsSDKError {
     Object.setPrototypeOf(this, UndefinedActionError.prototype);
   }
 }
+
+/**
+ * 无效等级变更错误
+ * 当尝试进行无效的等级变更时抛出
+ * 
+ * @example
+ * ```typescript
+ * throw new InvalidTierChangeError('user123', 'pro', 'premium', 'Target tier must be higher than current tier for upgrade');
+ * // Error: Invalid tier change for user user123: Target tier must be higher than current tier for upgrade. Current tier: pro, Target tier: premium
+ * ```
+ */
+export class InvalidTierChangeError extends CreditsSDKError {
+  /**
+   * 创建一个新的 InvalidTierChangeError
+   * @param userId - 用户 ID
+   * @param currentTier - 当前会员等级 (null 表示无会员)
+   * @param targetTier - 目标会员等级
+   * @param reason - 错误原因
+   */
+  constructor(
+    public userId: string,
+    public currentTier: string | null,
+    public targetTier: string,
+    public reason: string
+  ) {
+    super(
+      `Invalid tier change for user ${userId}: ${reason}. ` +
+      `Current tier: ${currentTier || 'none'}, Target tier: ${targetTier}`,
+      'INVALID_TIER_CHANGE'
+    );
+    this.name = 'InvalidTierChangeError';
+    Object.setPrototypeOf(this, InvalidTierChangeError.prototype);
+  }
+}
+
+/**
+ * 未定义等级错误
+ * 当等级未在配置中定义时抛出
+ * 
+ * @example
+ * ```typescript
+ * throw new UndefinedTierError('platinum');
+ * // Error: Tier 'platinum' is not defined in configuration
+ * ```
+ */
+export class UndefinedTierError extends CreditsSDKError {
+  /**
+   * 创建一个新的 UndefinedTierError
+   * @param tier - 等级名称
+   */
+  constructor(public tier: string) {
+    super(`Tier '${tier}' is not defined in configuration`, 'UNDEFINED_TIER');
+    this.name = 'UndefinedTierError';
+    Object.setPrototypeOf(this, UndefinedTierError.prototype);
+  }
+}

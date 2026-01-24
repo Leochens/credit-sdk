@@ -12,6 +12,8 @@ import {
   IdempotencyKeyConflictError,
   ConfigurationError,
   UndefinedActionError,
+  InvalidTierChangeError,
+  UndefinedTierError,
 } from '../../src/core/errors';
 
 describe('CreditsSDKError', () => {
@@ -305,6 +307,8 @@ describe('Error inheritance and type checking', () => {
       new IdempotencyKeyConflictError('key123', {}),
       new ConfigurationError('Test error'),
       new UndefinedActionError('unknown-action'),
+      new InvalidTierChangeError('user123', 'pro', 'premium', 'Target tier must be higher than current tier for upgrade'),
+      new UndefinedTierError('platinum'),
     ];
 
     errors.forEach(error => {
@@ -324,5 +328,138 @@ describe('Error inheritance and type checking', () => {
 
     expect(notFoundError).toBeInstanceOf(UserNotFoundError);
     expect(notFoundError).not.toBeInstanceOf(InsufficientCreditsError);
+  });
+});
+
+describe('InvalidTierChangeError', () => {
+  it('should create error with correct message format when user has current tier', () => {
+    const error = new InvalidTierChangeError(
+      'user123',
+      'pro',
+      'premium',
+      'Target tier must be higher than current tier for upgrade'
+    );
+    
+    expect(error.message).toBe(
+      'Invalid tier change for user user123: Target tier must be higher than current tier for upgrade. ' +
+      'Current tier: pro, Target tier: premium'
+    );
+  });
+
+  it('should create error with correct message format when user has no current tier', () => {
+    const error = new InvalidTierChangeError(
+      'user123',
+      null,
+      'free',
+      'Target tier must be lower than current tier for downgrade'
+    );
+    
+    expect(error.message).toBe(
+      'Invalid tier change for user user123: Target tier must be lower than current tier for downgrade. ' +
+      'Current tier: none, Target tier: free'
+    );
+  });
+
+  it('should have correct error code', () => {
+    const error = new InvalidTierChangeError('user123', 'pro', 'premium', 'Test reason');
+    
+    expect(error.code).toBe('INVALID_TIER_CHANGE');
+  });
+
+  it('should have correct name', () => {
+    const error = new InvalidTierChangeError('user123', 'pro', 'premium', 'Test reason');
+    
+    expect(error.name).toBe('InvalidTierChangeError');
+  });
+
+  it('should store userId, currentTier, targetTier, and reason properties', () => {
+    const error = new InvalidTierChangeError('user123', 'pro', 'premium', 'Test reason');
+    
+    expect(error.userId).toBe('user123');
+    expect(error.currentTier).toBe('pro');
+    expect(error.targetTier).toBe('premium');
+    expect(error.reason).toBe('Test reason');
+  });
+
+  it('should handle null current tier', () => {
+    const error = new InvalidTierChangeError('user456', null, 'free', 'Cannot downgrade from no tier');
+    
+    expect(error.currentTier).toBeNull();
+    expect(error.message).toContain('Current tier: none');
+  });
+
+  it('should be instance of CreditsSDKError and Error', () => {
+    const error = new InvalidTierChangeError('user123', 'pro', 'premium', 'Test reason');
+    
+    expect(error).toBeInstanceOf(Error);
+    expect(error).toBeInstanceOf(CreditsSDKError);
+    expect(error).toBeInstanceOf(InvalidTierChangeError);
+  });
+
+  it('should handle various tier change scenarios', () => {
+    const scenarios = [
+      { userId: 'user1', current: 'free', target: 'free', reason: 'Same tier' },
+      { userId: 'user2', current: 'premium', target: 'pro', reason: 'Target tier must be lower' },
+      { userId: 'user3', current: 'pro', target: 'free', reason: 'Invalid downgrade' },
+    ];
+
+    scenarios.forEach(scenario => {
+      const error = new InvalidTierChangeError(
+        scenario.userId,
+        scenario.current,
+        scenario.target,
+        scenario.reason
+      );
+      expect(error.userId).toBe(scenario.userId);
+      expect(error.currentTier).toBe(scenario.current);
+      expect(error.targetTier).toBe(scenario.target);
+      expect(error.reason).toBe(scenario.reason);
+      expect(error.message).toContain(scenario.reason);
+    });
+  });
+});
+
+describe('UndefinedTierError', () => {
+  it('should create error with correct message format', () => {
+    const error = new UndefinedTierError('platinum');
+    
+    expect(error.message).toBe("Tier 'platinum' is not defined in configuration");
+  });
+
+  it('should have correct error code', () => {
+    const error = new UndefinedTierError('platinum');
+    
+    expect(error.code).toBe('UNDEFINED_TIER');
+  });
+
+  it('should have correct name', () => {
+    const error = new UndefinedTierError('platinum');
+    
+    expect(error.name).toBe('UndefinedTierError');
+  });
+
+  it('should store tier property', () => {
+    const error = new UndefinedTierError('platinum');
+    
+    expect(error.tier).toBe('platinum');
+  });
+
+  it('should be instance of CreditsSDKError and Error', () => {
+    const error = new UndefinedTierError('platinum');
+    
+    expect(error).toBeInstanceOf(Error);
+    expect(error).toBeInstanceOf(CreditsSDKError);
+    expect(error).toBeInstanceOf(UndefinedTierError);
+  });
+
+  it('should handle various tier names', () => {
+    const tiers = ['platinum', 'enterprise', 'vip', 'unknown-tier'];
+
+    tiers.forEach(tier => {
+      const error = new UndefinedTierError(tier);
+      expect(error.tier).toBe(tier);
+      expect(error.message).toContain(tier);
+      expect(error.message).toContain('not defined in configuration');
+    });
   });
 });
