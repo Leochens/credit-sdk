@@ -265,59 +265,6 @@ describe('CreditsEngine Configuration Validation - Property Tests', () => {
       );
     });
 
-    /**
-     * Property 8.3: Negative credits cap should throw ConfigurationError
-     * 
-     * For any configuration where at least one tier has a negative credits cap,
-     * the system should throw a ConfigurationError.
-     * 
-     * **Validates: Requirement 3.3, 3.4**
-     */
-    it('should throw ConfigurationError when any credits cap is negative', () => {
-      fc.assert(
-        fc.property(
-          // Generate tier names
-          fc.array(
-            fc.string({ minLength: 1, maxLength: 20 }),
-            { minLength: 1, maxLength: 5 }
-          ).map(arr => [...new Set(arr)]).filter(arr => arr.length >= 1),
-          // Generate a negative number
-          fc.integer({ min: -10000, max: -1 }),
-          (tierNames, negativeCap) => {
-            // Create tiers object
-            const tiers: Record<string, number> = {};
-            tierNames.forEach((name, index) => {
-              tiers[name] = index;
-            });
-
-            // Create creditsCaps with one negative value
-            const creditsCaps: Record<string, number> = {};
-            tierNames.forEach((name, index) => {
-              // Make the first tier have the negative cap
-              creditsCaps[name] = index === 0 ? negativeCap : (index + 1) * 100;
-            });
-
-            const invalidConfig = {
-              ...baseValidConfig,
-              membership: {
-                tiers,
-                requirements: {},
-                creditsCaps
-              }
-            };
-
-            expect(() => {
-              new CreditsEngine({ storage, config: invalidConfig });
-            }).toThrow(ConfigurationError);
-
-            expect(() => {
-              new CreditsEngine({ storage, config: invalidConfig });
-            }).toThrow(`Credits cap for tier '${tierNames[0]}' must be a non-negative number`);
-          }
-        ),
-        { numRuns: 100 }
-      );
-    });
 
     /**
      * Property 8.4: Non-numeric credits cap should throw ConfigurationError

@@ -1,9 +1,14 @@
 {
-  "name": "credit-sdk",
+  "name": "@leochens/credit-sdk",
   "version": "1.0.0",
-  "description": "通用 SaaS 积分系统 SDK",
+  "description": "A universal SaaS credits management SDK for flexible billing and subscription systems",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
     "build:watch": "tsc --watch",
@@ -17,10 +22,25 @@
     "credits",
     "saas",
     "billing",
-    "sdk"
+    "sdk",
+    "subscription",
+    "payment",
+    "membership",
+    "tier-management"
   ],
   "author": "",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/leochens/credit-sdk.git"
+  },
+  "bugs": {
+    "url": "https://github.com/leochens/credit-sdk/issues"
+  },
+  "homepage": "https://github.com/leochens/credit-sdk#readme",
+  "engines": {
+    "node": ">=16.0.0"
+  },
   "devDependencies": {
     "@prisma/client": "^7.3.0",
     "@types/node": "^20.0.0",
@@ -28,5 +48,13 @@
     "prisma": "^7.3.0",
     "typescript": "^5.0.0",
     "vitest": "^1.0.0"
+  },
+  "peerDependencies": {
+    "@prisma/client": "^7.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@prisma/client": {
+      "optional": true
+    }
   }
 }
