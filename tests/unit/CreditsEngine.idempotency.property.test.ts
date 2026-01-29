@@ -334,6 +334,9 @@ describe('CreditsEngine Idempotency - Property Tests', () => {
 
             // 创建用户
             const userId = `user-multi-${Date.now()}-${Math.floor(Math.random() * 1000000)}`;
+            // Make idempotency key unique per user to avoid collisions across test iterations
+            const uniqueIdempotencyKey = `${userId}-${idempotencyKey}`;
+            
             const user: User = {
               id: userId,
               credits: initialCredits,
@@ -350,7 +353,7 @@ describe('CreditsEngine Idempotency - Property Tests', () => {
               const result = await engine.upgradeTier({
                 userId,
                 targetTier,
-                idempotencyKey
+                idempotencyKey: uniqueIdempotencyKey
               });
               results.push(result);
             }

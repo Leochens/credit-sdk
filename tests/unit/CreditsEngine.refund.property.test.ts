@@ -313,6 +313,9 @@ describe('CreditsEngine Refund - Property Tests', () => {
           async (initialBalance, refundAmount, idempotencyKey) => {
             // 创建用户
             const userId = `user-idem-refund-${Date.now()}-${Math.floor(Math.random() * 1000000)}`;
+            // Make idempotency key unique per user to avoid collisions across test iterations
+            const uniqueIdempotencyKey = `${userId}-${idempotencyKey}`;
+            
             const user: User = {
               id: userId,
               credits: initialBalance,
@@ -328,7 +331,7 @@ describe('CreditsEngine Refund - Property Tests', () => {
               userId,
               amount: refundAmount,
               action: 'refund-with-idempotency',
-              idempotencyKey
+              idempotencyKey: uniqueIdempotencyKey
             });
 
             // 第二次使用相同幂等键
@@ -336,7 +339,7 @@ describe('CreditsEngine Refund - Property Tests', () => {
               userId,
               amount: refundAmount,
               action: 'refund-with-idempotency',
-              idempotencyKey
+              idempotencyKey: uniqueIdempotencyKey
             });
 
             // 验证结果相同
