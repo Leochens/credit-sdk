@@ -236,3 +236,334 @@ export class UndefinedTierError extends CreditsSDKError {
     Object.setPrototypeOf(this, UndefinedTierError.prototype);
   }
 }
+
+/**
+ * 缺少变量错误
+ * 当公式计算时缺少必需的变量时抛出
+ * 
+ * ## 使用场景
+ * 
+ * 当使用动态成本公式时，如果公式需要某个变量但在计算时未提供该变量，
+ * 系统会抛出此错误。这有助于开发者快速定位问题。
+ * 
+ * ## 错误信息
+ * 
+ * 错误消息包含以下信息：
+ * - 完整的公式字符串
+ * - 缺少的变量名
+ * - 已提供的变量列表
+ * 
+ * ## 示例
+ * 
+ * ### 基础示例
+ * ```typescript
+ * const formula = new DynamicCostFormula({
+ *   'ai-completion': {
+ *     default: '{token} * 0.001 + 10'
+ *   }
+ * });
+ * 
+ * try {
+ *   // 忘记提供 token 变量
+ *   formula.calculate('ai-completion', null, {});
+ * } catch (error) {
+ *   if (error instanceof MissingVariableError) {
+ *     console.error(error.message);
+ *     // "Formula '{token} * 0.001 + 10' requires variable 'token', but only [] were provided"
+ *     
+ *     console.log(error.formula); // '{token} * 0.001 + 10'
+ *     console.log(error.missingVariable); // 'token'
+ *     console.log(error.providedVariables); // []
+ *     console.log(error.code); // 'MISSING_VARIABLE'
+ *   }
+ * }
+ * ```
+ * 
+ * ### 多变量场景
+ * ```typescript
+ * const formula = new DynamicCostFormula({
+ *   'video-processing': {
+ *     default: '{duration} * 2 + {resolution} * 0.5'
+ *   }
+ * });
+ * 
+ * try {
+ *   // 只提供了 duration，缺少 resolution
+ *   formula.calculate('video-processing', null, { duration: 120 });
+ * } catch (error) {
+ *   if (error instanceof MissingVariableError) {
+ *     console.error(error.message);
+ *     // "Formula '{duration} * 2 + {resolution} * 0.5' requires variable 'resolution', 
+ *     //  but only [duration] were provided"
+ *     
+ *     console.log(error.missingVariable); // 'resolution'
+ *     console.log(error.providedVariables); // ['duration']
+ *   }
+ * }
+ * ```
+ * 
+ * ## 如何避免
+ * 
+ * 1. **确保提供所有必需变量**：
+ * ```typescript
+ * // ✅ 正确：提供所有变量
+ * formula.calculate('ai-completion', null, { token: 3500 });
+ * ```
+ * 
+ * 2. **使用 extractVariables 检查需要哪些变量**：
+ * ```typescript
+ * const parser = new FormulaParser();
+ * const variables = parser.extractVariables('{token} * 0.001 + 10');
+ * console.log(variables); // ['token']
+ * 
+ * // 确保提供所有变量
+ * const variableValues = { token: 3500 };
+ * formula.calculate('ai-completion', null, variableValues);
+ * ```
+ * 
+ * 3. **配置回退值**：
+ * ```typescript
+ * const config: DynamicCostConfig = {
+ *   'ai-completion': {
+ *     default: 10,  // 固定回退值
+ *     premium: '{token} * 0.0008 + 8'
+ *   }
+ * };
+ * 
+ * // 如果未提供 variables，会使用 default 值 10
+ * formula.calculate('ai-completion', 'premium'); // 返回 10
+ * ```
+ * 
+ * @see {@link FormulaParser} 公式解析器
+ * @see {@link DynamicCostFormula} 动态成本计算类
+ * @see {@link FormulaEvaluationError} 公式计算错误
+ */
+export class MissingVariableError extends CreditsSDKError {
+  /**
+   * 创建一个新的 MissingVariableError
+   * @param formula - 公式字符串
+   * @param missingVariable - 缺少的变量名
+   * @param providedVariables - 已提供的变量名列表
+   */
+  constructor(
+    public formula: string,
+    public missingVariable: string,
+    public providedVariables: string[]
+  ) {
+    super(
+      `Formula '${formula}' requires variable '${missingVariable}', but only [${providedVariables.join(', ')}] were provided`,
+      'MISSING_VARIABLE'
+    );
+    this.name = 'MissingVariableError';
+    Object.setPrototypeOf(this, MissingVariableError.prototype);
+  }
+}
+
+/**
+ * 公式计算错误
+ * 当公式计算过程中发生错误时抛出（如除零、无效运算等）
+ * 
+ * ## 使用场景
+ * 
+ * 此错误在以下情况下抛出：
+ * - **除零错误**：公式中的除法运算导致除以零
+ * - **无效结果**：计算结果为 NaN（非数字）
+ * - **无穷大**：计算结果为 Infinity 或 -Infinity
+ * - **其他运算错误**：JavaScript 表达式执行失败
+ * 
+ * ## 错误信息
+ * 
+ * 错误消息包含以下信息：
+ * - 完整的公式字符串
+ * - 提供的所有变量及其值
+ * - 具体的错误原因
+ * 
+ * ## 示例
+ * 
+ * ### 除零错误
+ * ```typescript
+ * const formula = new DynamicCostFormula({
+ *   'data-processing': {
+ *     default: '{amount} / {count}'
+ *   }
+ * });
+ * 
+ * try {
+ *   // count 为 0，导致除零
+ *   formula.calculate('data-processing', null, { amount: 100, count: 0 });
+ * } catch (error) {
+ *   if (error instanceof FormulaEvaluationError) {
+ *     console.error(error.message);
+ *     // "Failed to evaluate formula '{amount} / {count}' with variables 
+ *     //  {"amount":100,"count":0}: Formula evaluation resulted in Infinity 
+ *     //  (possible division by zero)"
+ *     
+ *     console.log(error.formula); // '{amount} / {count}'
+ *     console.log(error.variables); // { amount: 100, count: 0 }
+ *     console.log(error.cause); // 'Formula evaluation resulted in Infinity...'
+ *     console.log(error.code); // 'FORMULA_EVALUATION_ERROR'
+ *   }
+ * }
+ * ```
+ * 
+ * ### NaN 结果
+ * ```typescript
+ * const parser = new FormulaParser();
+ * 
+ * try {
+ *   // 某些运算可能导致 NaN
+ *   parser.evaluate('{value} * {multiplier}', { value: NaN, multiplier: 2 });
+ * } catch (error) {
+ *   if (error instanceof FormulaEvaluationError) {
+ *     console.error(error.message);
+ *     // "Failed to evaluate formula... Formula evaluation resulted in NaN"
+ *     
+ *     console.log(error.cause); // 'Formula evaluation resulted in NaN'
+ *   }
+ * }
+ * ```
+ * 
+ * ### 无效变量值
+ * ```typescript
+ * const parser = new FormulaParser();
+ * 
+ * try {
+ *   // 变量值不是有效数字
+ *   parser.evaluate('{token} * 0.001', { token: 'invalid' as any });
+ * } catch (error) {
+ *   if (error instanceof FormulaEvaluationError) {
+ *     console.error(error.message);
+ *     // "Failed to evaluate formula... Variable 'token' has invalid value: invalid"
+ *     
+ *     console.log(error.cause); // "Variable 'token' has invalid value: invalid"
+ *   }
+ * }
+ * ```
+ * 
+ * ## 如何避免
+ * 
+ * ### 1. 验证变量值
+ * ```typescript
+ * function safeCalculate(
+ *   formula: DynamicCostFormula,
+ *   action: string,
+ *   variables: Record<string, number>
+ * ): number {
+ *   // 验证所有变量值都是有效数字
+ *   for (const [key, value] of Object.entries(variables)) {
+ *     if (typeof value !== 'number' || isNaN(value) || !isFinite(value)) {
+ *       throw new Error(`Invalid variable value for ${key}: ${value}`);
+ *     }
+ *   }
+ *   
+ *   return formula.calculate(action, null, variables);
+ * }
+ * ```
+ * 
+ * ### 2. 防止除零
+ * ```typescript
+ * // ❌ 不安全：可能除零
+ * const config1: DynamicCostConfig = {
+ *   'data-processing': {
+ *     default: '{amount} / {count}'
+ *   }
+ * };
+ * 
+ * // ✅ 安全：使用条件表达式防止除零
+ * const config2: DynamicCostConfig = {
+ *   'data-processing': {
+ *     default: '{count} > 0 ? {amount} / {count} : 0'
+ *   }
+ * };
+ * ```
+ * 
+ * ### 3. 使用 try-catch 处理错误
+ * ```typescript
+ * async function chargeWithErrorHandling(
+ *   engine: CreditsEngine,
+ *   userId: string,
+ *   action: string,
+ *   variables: Record<string, number>
+ * ) {
+ *   try {
+ *     return await engine.charge({ userId, action, variables });
+ *   } catch (error) {
+ *     if (error instanceof FormulaEvaluationError) {
+ *       // 记录错误到日志系统
+ *       console.error('Formula evaluation failed:', {
+ *         formula: error.formula,
+ *         variables: error.variables,
+ *         cause: error.cause
+ *       });
+ *       
+ *       // 使用回退值或重新抛出错误
+ *       throw new Error('Unable to calculate cost. Please contact support.');
+ *     }
+ *     throw error;
+ *   }
+ * }
+ * ```
+ * 
+ * ### 4. 测试公式
+ * ```typescript
+ * // 在部署前测试公式的各种边界情况
+ * function testFormula(formula: string, testCases: Array<Record<string, number>>) {
+ *   const parser = new FormulaParser();
+ *   
+ *   for (const variables of testCases) {
+ *     try {
+ *       const result = parser.evaluate(formula, variables);
+ *       console.log(`✅ ${JSON.stringify(variables)} => ${result}`);
+ *     } catch (error) {
+ *       console.error(`❌ ${JSON.stringify(variables)} => ${error.message}`);
+ *     }
+ *   }
+ * }
+ * 
+ * // 测试除法公式
+ * testFormula('{amount} / {count}', [
+ *   { amount: 100, count: 10 },  // ✅ 正常
+ *   { amount: 100, count: 0 },   // ❌ 除零
+ *   { amount: 100, count: -5 }   // ✅ 负数除法
+ * ]);
+ * ```
+ * 
+ * ## 审计日志
+ * 
+ * 当此错误发生时，CreditsEngine 会自动记录到审计日志：
+ * ```typescript
+ * {
+ *   type: 'formula_evaluation_error',
+ *   userId: 'user-123',
+ *   action: 'data-processing',
+ *   formula: '{amount} / {count}',
+ *   variables: { amount: 100, count: 0 },
+ *   error: 'Formula evaluation resulted in Infinity (possible division by zero)',
+ *   timestamp: '2024-01-15T10:30:00Z'
+ * }
+ * ```
+ * 
+ * @see {@link FormulaParser} 公式解析器
+ * @see {@link DynamicCostFormula} 动态成本计算类
+ * @see {@link MissingVariableError} 缺少变量错误
+ */
+export class FormulaEvaluationError extends CreditsSDKError {
+  /**
+   * 创建一个新的 FormulaEvaluationError
+   * @param formula - 公式字符串
+   * @param variables - 变量值映射
+   * @param cause - 错误原因
+   */
+  constructor(
+    public formula: string,
+    public variables: Record<string, number>,
+    public cause: string
+  ) {
+    super(
+      `Failed to evaluate formula '${formula}' with variables ${JSON.stringify(variables)}: ${cause}`,
+      'FORMULA_EVALUATION_ERROR'
+    );
+    this.name = 'FormulaEvaluationError';
+    Object.setPrototypeOf(this, FormulaEvaluationError.prototype);
+  }
+}

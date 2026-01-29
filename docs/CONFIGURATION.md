@@ -48,9 +48,159 @@ costs: {
 }
 ```
 
-### Dynamic Pricing Strategy
+### Dynamic Cost Formulas
 
-You can implement different pricing strategies:
+The SDK supports dynamic cost formulas that calculate charges based on actual resource consumption (e.g., AI tokens, processing time, data volume).
+
+**Basic Dynamic Formula:**
+```typescript
+costs: {
+  'ai-completion': {
+    default: '{token} * 0.001 + 10',      // 0.001 credits per token + 10 base fee
+    premium: '{token} * 0.0008 + 8',      // Member discount
+    enterprise: '{token} * 0.0005 + 5'
+  }
+}
+```
+
+**Multi-Variable Formula:**
+```typescript
+costs: {
+  'video-processing': {
+    default: '{duration} * 2 + {resolution} * 0.5',
+    premium: '({duration} * 2 + {resolution} * 0.5) * 0.8'  // 20% discount
+  }
+}
+```
+
+**Tiered Pricing Formula:**
+```typescript
+costs: {
+  'data-analysis': {
+    // First 1000 rows: 0.1 credits each
+    // Additional rows: 0.05 credits each
+    default: '{rows} <= 1000 ? {rows} * 0.1 : 100 + ({rows} - 1000) * 0.05',
+    premium: '{rows} <= 1000 ? {rows} * 0.08 : 80 + ({rows} - 1000) * 0.04'
+  }
+}
+```
+
+**Mixed Configuration (Fixed + Dynamic):**
+```typescript
+costs: {
+  // Fixed cost (traditional)
+  'generate-image': { 
+    default: 20, 
+    premium: 15, 
+    enterprise: 10 
+  },
+  
+  // Dynamic formula
+  'ai-completion': {
+    default: '{token} * 0.001 + 10',
+    premium: '{token} * 0.0008 + 8'
+  }
+}
+```
+
+**Supported Operators:**
+- Arithmetic: `+`, `-`, `*`, `/`
+- Comparison: `<`, `>`, `<=`, `>=`, `==`, `!=`
+- Ternary: `condition ? valueIfTrue : valueIfFalse`
+- Parentheses: `(`, `)` for precedence
+
+**Variable Naming Rules:**
+- Must start with a letter
+- Can contain letters, numbers, and underscores
+- Format: `{variableName}`
+
+**Using Dynamic Formulas:**
+```typescript
+// Charge with variables
+const result = await engine.charge({
+  userId: 'user-123',
+  action: 'ai-completion',
+  variables: {
+    token: 3500  // Used 3500 tokens
+  }
+});
+// Cost: 3500 * 0.001 + 10 = 13.5 credits
+```
+
+**Fallback Mechanism:**
+```typescript
+costs: {
+  'ai-completion': {
+    default: 10,  // Fallback value (number)
+    premium: '{token} * 0.0008 + 8'  // Formula
+  }
+}
+
+// Without variables - uses fallback
+await engine.charge({
+  userId: 'user-123',
+  action: 'ai-completion'
+  // No variables provided, uses 10 credits
+});
+
+// With variables - uses formula
+await engine.charge({
+  userId: 'user-123',
+  action: 'ai-completion',
+  variables: { token: 1000 }
+  // Uses formula: 1000 * 0.0008 + 8 = 8.8 credits
+});
+```
+
+**Transaction Metadata:**
+
+Dynamic cost calculations are automatically recorded in transaction metadata:
+
+```typescript
+const result = await engine.charge({
+  userId: 'user-123',
+  action: 'ai-completion',
+  variables: { token: 3500 }
+});
+
+// Transaction record includes:
+// {
+//   metadata: {
+//     dynamicCost: {
+//       formula: '{token} * 0.001 + 10',
+//       variables: { token: 3500 },
+//       rawCost: 13.5,
+//       finalCost: 13.5
+//     }
+//   }
+// }
+```
+
+**Error Handling:**
+
+```typescript
+import { MissingVariableError, FormulaEvaluationError } from 'credit-sdk';
+
+try {
+  await engine.charge({
+    userId: 'user-123',
+    action: 'ai-completion',
+    variables: { token: 1000 }
+  });
+} catch (error) {
+  if (error instanceof MissingVariableError) {
+    // Formula requires a variable that wasn't provided
+    console.error('Missing variable:', error.missingVariable);
+  } else if (error instanceof FormulaEvaluationError) {
+    // Error during formula calculation (e.g., division by zero)
+    console.error('Formula error:', error.cause);
+  }
+}
+```
+
+### Static Pricing Strategy
+
+You can also implement different static pricing strategies:
 
 **Volume Discounts:**
 ```typescript

@@ -22,7 +22,7 @@ import {
   HistoryOptions
 } from './types';
 import {
-  CostFormula,
+  DynamicCostFormula,
   MembershipValidator,
   IdempotencyManager,
   AuditTrail,
@@ -34,7 +34,9 @@ import {
   MembershipRequiredError,
   InsufficientCreditsError,
   UndefinedTierError,
-  InvalidTierChangeError
+  InvalidTierChangeError,
+  MissingVariableError,
+  FormulaEvaluationError
 } from './errors';
 
 /**
@@ -114,7 +116,7 @@ export class CreditsEngine {
   private readonly logger: ILogAdapter;
   
   // 特性模块
-  private readonly costFormula: CostFormula;
+  private readonly costFormula: DynamicCostFormula;
   private readonly membershipValidator: MembershipValidator;
   private readonly idempotencyManager: IdempotencyManager;
   private readonly auditTrail: AuditTrail;
@@ -183,8 +185,9 @@ export class CreditsEngine {
     this.logger.debug('Initializing CreditsEngine feature modules');
 
     // 成本计算模块
-    this.costFormula = new CostFormula(this.config.costs);
-    this.logger.debug('CostFormula initialized', {
+    // 使用 DynamicCostFormula 支持动态公式和固定成本
+    this.costFormula = new DynamicCostFormula(this.config.costs as any);
+    this.logger.debug('DynamicCostFormula initialized', {
       actionsCount: Object.keys(this.config.costs).length
     });
 
@@ -243,12 +246,14 @@ export class CreditsEngine {
 
     // 验证每个操作都有 default 成本
     for (const [action, costConfig] of Object.entries(config.costs)) {
-      if (typeof costConfig.default !== 'number') {
+      // default 可以是数字（固定成本）或字符串（动态公式）
+      if (typeof costConfig.default !== 'number' && typeof costConfig.default !== 'string') {
         throw new ConfigurationError(
-          `Action '${action}' must have a default cost`
+          `Action '${action}' must have a default cost (number or formula string)`
         );
       }
-      if (costConfig.default < 0) {
+      // 如果是数字，验证非负
+      if (typeof costConfig.default === 'number' && costConfig.default < 0) {
         throw new ConfigurationError(
           `Action '${action}' default cost must be non-negative`
         );
@@ -428,13 +433,14 @@ export class CreditsEngine {
    * - 4.5: 支持通过 txn 参数将扣费操作包装在外部事务上下文中
    */
   async charge(params: ChargeParams): Promise<ChargeResult> {
-    const { userId, action, idempotencyKey, metadata = {}, txn } = params;
+    const { userId, action, idempotencyKey, metadata = {}, txn, variables } = params;
 
     this.logger.info('Starting charge operation', {
       userId,
       action,
       hasIdempotencyKey: !!idempotencyKey,
-      hasTransaction: !!txn
+      hasTransaction: !!txn,
+      hasVariables: !!variables
     });
 
     try {
@@ -500,12 +506,20 @@ export class CreditsEngine {
       // 步骤 4: 计算成本
       this.logger.debug('Calculating cost', {
         action,
-        membershipTier: user.membershipTier
+        membershipTier: user.membershipTier,
+        hasVariables: !!variables
       });
 
-      const cost = this.costFormula.calculate(action, user.membershipTier);
+      const cost = this.costFormula.calculate(action, user.membershipTier, variables);
       
-      this.logger.debug('Cost calculated', { cost });
+      // 获取计算详情（用于记录到metadata）
+      const calculationDetails = this.costFormula.getCalculationDetails(
+        action,
+        user.membershipTier,
+        variables
+      );
+      
+      this.logger.debug('Cost calculated', { cost, isDynamic: calculationDetails.isDynamic });
 
       // 步骤 5: 检查余额
       if (user.credits < cost) {
@@ -539,6 +553,19 @@ export class CreditsEngine {
       // 步骤 7: 创建交易记录
       this.logger.debug('Creating transaction record', { userId, action, cost });
 
+      // 构建交易元数据，只在使用动态公式时添加dynamicCost字段
+      const transactionMetadata = {
+        ...metadata,
+        ...(calculationDetails.isDynamic && {
+          dynamicCost: {
+            formula: calculationDetails.formula,
+            variables: calculationDetails.variables,
+            rawCost: calculationDetails.rawCost,
+            finalCost: calculationDetails.finalCost
+          }
+        })
+      };
+
       const transaction = await this.storage.createTransaction(
         {
           userId,
@@ -546,7 +573,7 @@ export class CreditsEngine {
           amount: -cost, // 负数表示扣费
           balanceBefore,
           balanceAfter,
-          metadata
+          metadata: transactionMetadata
         },
         txn
       );
@@ -604,6 +631,60 @@ export class CreditsEngine {
       return result;
 
     } catch (error) {
+      // 增强的错误处理：特别处理公式计算错误
+      let errorMetadata: Record<string, any> = {
+        operation: action,
+        error: error instanceof Error ? error.message : String(error),
+        ...metadata
+      };
+
+      // 如果是公式相关错误，添加详细的上下文信息
+      if (error instanceof MissingVariableError) {
+        // MissingVariableError: 添加公式和变量信息
+        errorMetadata = {
+          ...errorMetadata,
+          errorType: 'MissingVariableError',
+          errorCode: error.code,
+          formula: error.formula,
+          missingVariable: error.missingVariable,
+          providedVariables: error.providedVariables,
+          variables: variables || {}
+        };
+        
+        this.logger.error('Formula calculation failed: missing variable', {
+          userId,
+          action,
+          formula: error.formula,
+          missingVariable: error.missingVariable,
+          providedVariables: error.providedVariables
+        });
+      } else if (error instanceof FormulaEvaluationError) {
+        // FormulaEvaluationError: 添加公式、变量和错误原因
+        errorMetadata = {
+          ...errorMetadata,
+          errorType: 'FormulaEvaluationError',
+          errorCode: error.code,
+          formula: error.formula,
+          variables: error.variables,
+          cause: error.cause
+        };
+        
+        this.logger.error('Formula calculation failed: evaluation error', {
+          userId,
+          action,
+          formula: error.formula,
+          variables: error.variables,
+          cause: error.cause
+        });
+      } else {
+        // 其他错误：记录通用错误日志
+        this.logger.error('Charge operation failed', {
+          userId,
+          action,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+
       // 记录失败的审计日志
       if (this.config.audit.enabled) {
         try {
@@ -612,11 +693,7 @@ export class CreditsEngine {
               userId,
               action: 'charge',
               status: 'failed',
-              metadata: {
-                operation: action,
-                error: error instanceof Error ? error.message : String(error),
-                ...metadata
-              },
+              metadata: errorMetadata,
               errorMessage: error instanceof Error ? error.message : String(error)
             },
             txn
@@ -630,12 +707,6 @@ export class CreditsEngine {
           });
         }
       }
-
-      this.logger.error('Charge operation failed', {
-        userId,
-        action,
-        error: error instanceof Error ? error.message : String(error)
-      });
 
       // 重新抛出原始错误
       throw error;

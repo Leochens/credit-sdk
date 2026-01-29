@@ -14,6 +14,8 @@ import {
   UndefinedActionError,
   InvalidTierChangeError,
   UndefinedTierError,
+  MissingVariableError,
+  FormulaEvaluationError,
 } from '../../src/core/errors';
 
 describe('CreditsSDKError', () => {
@@ -309,6 +311,8 @@ describe('Error inheritance and type checking', () => {
       new UndefinedActionError('unknown-action'),
       new InvalidTierChangeError('user123', 'pro', 'premium', 'Target tier must be higher than current tier for upgrade'),
       new UndefinedTierError('platinum'),
+      new MissingVariableError('{token} * 0.5', 'token', ['duration']),
+      new FormulaEvaluationError('{amount} / {count}', { amount: 100, count: 0 }, 'Division by zero'),
     ];
 
     errors.forEach(error => {
@@ -461,5 +465,199 @@ describe('UndefinedTierError', () => {
       expect(error.message).toContain(tier);
       expect(error.message).toContain('not defined in configuration');
     });
+  });
+});
+
+describe('MissingVariableError', () => {
+  it('should create error with correct message format', () => {
+    const error = new MissingVariableError('{token} * 0.5', 'token', ['duration']);
+    
+    expect(error.message).toBe("Formula '{token} * 0.5' requires variable 'token', but only [duration] were provided");
+  });
+
+  it('should create error with correct message format when no variables provided', () => {
+    const error = new MissingVariableError('{token} * 0.5 + {count}', 'token', []);
+    
+    expect(error.message).toBe("Formula '{token} * 0.5 + {count}' requires variable 'token', but only [] were provided");
+  });
+
+  it('should create error with correct message format when multiple variables provided', () => {
+    const error = new MissingVariableError('{token} * 0.5 + {duration}', 'token', ['duration', 'count']);
+    
+    expect(error.message).toBe("Formula '{token} * 0.5 + {duration}' requires variable 'token', but only [duration, count] were provided");
+  });
+
+  it('should have correct error code', () => {
+    const error = new MissingVariableError('{token} * 0.5', 'token', ['duration']);
+    
+    expect(error.code).toBe('MISSING_VARIABLE');
+  });
+
+  it('should have correct name', () => {
+    const error = new MissingVariableError('{token} * 0.5', 'token', ['duration']);
+    
+    expect(error.name).toBe('MissingVariableError');
+  });
+
+  it('should store formula, missingVariable, and providedVariables properties', () => {
+    const formula = '{token} * 0.5 + {duration}';
+    const missingVariable = 'token';
+    const providedVariables = ['duration', 'count'];
+    const error = new MissingVariableError(formula, missingVariable, providedVariables);
+    
+    expect(error.formula).toBe(formula);
+    expect(error.missingVariable).toBe(missingVariable);
+    expect(error.providedVariables).toEqual(providedVariables);
+  });
+
+  it('should be instance of CreditsSDKError and Error', () => {
+    const error = new MissingVariableError('{token} * 0.5', 'token', ['duration']);
+    
+    expect(error).toBeInstanceOf(Error);
+    expect(error).toBeInstanceOf(CreditsSDKError);
+    expect(error).toBeInstanceOf(MissingVariableError);
+  });
+
+  it('should handle various formula and variable combinations', () => {
+    const scenarios = [
+      { formula: '{x} + {y}', missing: 'x', provided: ['y'] },
+      { formula: '{amount} / {count}', missing: 'count', provided: ['amount'] },
+      { formula: '{token} * 0.001 + 10', missing: 'token', provided: [] },
+    ];
+
+    scenarios.forEach(scenario => {
+      const error = new MissingVariableError(scenario.formula, scenario.missing, scenario.provided);
+      expect(error.formula).toBe(scenario.formula);
+      expect(error.missingVariable).toBe(scenario.missing);
+      expect(error.providedVariables).toEqual(scenario.provided);
+      expect(error.message).toContain(scenario.formula);
+      expect(error.message).toContain(scenario.missing);
+    });
+  });
+});
+
+describe('FormulaEvaluationError', () => {
+  it('should create error with correct message format', () => {
+    const error = new FormulaEvaluationError(
+      '{amount} / {count}',
+      { amount: 100, count: 0 },
+      'Division by zero'
+    );
+    
+    expect(error.message).toBe(
+      'Failed to evaluate formula \'{amount} / {count}\' with variables {"amount":100,"count":0}: Division by zero'
+    );
+  });
+
+  it('should create error with correct message format for various causes', () => {
+    const error = new FormulaEvaluationError(
+      '{x} * {y}',
+      { x: NaN, y: 5 },
+      'Invalid number: NaN'
+    );
+    
+    expect(error.message).toBe(
+      'Failed to evaluate formula \'{x} * {y}\' with variables {"x":null,"y":5}: Invalid number: NaN'
+    );
+  });
+
+  it('should have correct error code', () => {
+    const error = new FormulaEvaluationError(
+      '{amount} / {count}',
+      { amount: 100, count: 0 },
+      'Division by zero'
+    );
+    
+    expect(error.code).toBe('FORMULA_EVALUATION_ERROR');
+  });
+
+  it('should have correct name', () => {
+    const error = new FormulaEvaluationError(
+      '{amount} / {count}',
+      { amount: 100, count: 0 },
+      'Division by zero'
+    );
+    
+    expect(error.name).toBe('FormulaEvaluationError');
+  });
+
+  it('should store formula, variables, and cause properties', () => {
+    const formula = '{amount} / {count}';
+    const variables = { amount: 100, count: 0 };
+    const cause = 'Division by zero';
+    const error = new FormulaEvaluationError(formula, variables, cause);
+    
+    expect(error.formula).toBe(formula);
+    expect(error.variables).toEqual(variables);
+    expect(error.cause).toBe(cause);
+  });
+
+  it('should be instance of CreditsSDKError and Error', () => {
+    const error = new FormulaEvaluationError(
+      '{amount} / {count}',
+      { amount: 100, count: 0 },
+      'Division by zero'
+    );
+    
+    expect(error).toBeInstanceOf(Error);
+    expect(error).toBeInstanceOf(CreditsSDKError);
+    expect(error).toBeInstanceOf(FormulaEvaluationError);
+  });
+
+  it('should handle various error scenarios', () => {
+    const scenarios = [
+      {
+        formula: '{x} / {y}',
+        variables: { x: 10, y: 0 },
+        cause: 'Division by zero',
+      },
+      {
+        formula: '{token} * {rate}',
+        variables: { token: 1000, rate: Infinity },
+        cause: 'Result is Infinity',
+      },
+      {
+        formula: '{a} + {b}',
+        variables: { a: 100, b: 200 },
+        cause: 'Unexpected error',
+      },
+    ];
+
+    scenarios.forEach(scenario => {
+      const error = new FormulaEvaluationError(scenario.formula, scenario.variables, scenario.cause);
+      expect(error.formula).toBe(scenario.formula);
+      expect(error.variables).toEqual(scenario.variables);
+      expect(error.cause).toBe(scenario.cause);
+      expect(error.message).toContain(scenario.formula);
+      expect(error.message).toContain(scenario.cause);
+    });
+  });
+
+  it('should handle empty variables object', () => {
+    const error = new FormulaEvaluationError(
+      '10 + 20',
+      {},
+      'Syntax error'
+    );
+    
+    expect(error.variables).toEqual({});
+    expect(error.message).toContain('{}');
+  });
+
+  it('should handle complex variables object', () => {
+    const variables = {
+      token: 1000,
+      duration: 120,
+      resolution: 1920,
+      count: 5,
+    };
+    const error = new FormulaEvaluationError(
+      '{token} * 0.001 + {duration} * 2',
+      variables,
+      'Calculation overflow'
+    );
+    
+    expect(error.variables).toEqual(variables);
+    expect(error.message).toContain(JSON.stringify(variables));
   });
 });

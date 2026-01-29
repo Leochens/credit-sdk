@@ -48,11 +48,161 @@ costs: {
 }
 ```
 
-### Dynamic Pricing Strategy
+### 动态成本公式
 
-You can implement different pricing strategies:
+SDK 支持动态成本公式，可以根据实际资源消耗（如 AI token、处理时间、数据量等）计算费用。
 
-**Volume Discounts:**
+**基础动态公式：**
+```typescript
+costs: {
+  'ai-completion': {
+    default: '{token} * 0.001 + 10',      // 每 token 0.001 积分 + 10 基础费用
+    premium: '{token} * 0.0008 + 8',      // 会员折扣
+    enterprise: '{token} * 0.0005 + 5'
+  }
+}
+```
+
+**多变量公式：**
+```typescript
+costs: {
+  'video-processing': {
+    default: '{duration} * 2 + {resolution} * 0.5',
+    premium: '({duration} * 2 + {resolution} * 0.5) * 0.8'  // 20% 折扣
+  }
+}
+```
+
+**阶梯定价公式：**
+```typescript
+costs: {
+  'data-analysis': {
+    // 前 1000 行：每行 0.1 积分
+    // 额外行数：每行 0.05 积分
+    default: '{rows} <= 1000 ? {rows} * 0.1 : 100 + ({rows} - 1000) * 0.05',
+    premium: '{rows} <= 1000 ? {rows} * 0.08 : 80 + ({rows} - 1000) * 0.04'
+  }
+}
+```
+
+**混合配置（固定 + 动态）：**
+```typescript
+costs: {
+  // 固定成本（传统方式）
+  'generate-image': { 
+    default: 20, 
+    premium: 15, 
+    enterprise: 10 
+  },
+  
+  // 动态公式
+  'ai-completion': {
+    default: '{token} * 0.001 + 10',
+    premium: '{token} * 0.0008 + 8'
+  }
+}
+```
+
+**支持的运算符：**
+- 算术运算：`+`, `-`, `*`, `/`
+- 比较运算：`<`, `>`, `<=`, `>=`, `==`, `!=`
+- 三元运算：`condition ? valueIfTrue : valueIfFalse`
+- 括号：`(`, `)` 用于控制优先级
+
+**变量命名规则：**
+- 必须以字母开头
+- 可以包含字母、数字和下划线
+- 格式：`{variableName}`
+
+**使用动态公式：**
+```typescript
+// 使用变量计费
+const result = await engine.charge({
+  userId: 'user-123',
+  action: 'ai-completion',
+  variables: {
+    token: 3500  // 使用了 3500 个 token
+  }
+});
+// 成本: 3500 * 0.001 + 10 = 13.5 积分
+```
+
+**回退机制：**
+```typescript
+costs: {
+  'ai-completion': {
+    default: 10,  // 回退值（数字）
+    premium: '{token} * 0.0008 + 8'  // 公式
+  }
+}
+
+// 不提供变量 - 使用回退值
+await engine.charge({
+  userId: 'user-123',
+  action: 'ai-completion'
+  // 未提供变量，使用 10 积分
+});
+
+// 提供变量 - 使用公式
+await engine.charge({
+  userId: 'user-123',
+  action: 'ai-completion',
+  variables: { token: 1000 }
+  // 使用公式: 1000 * 0.0008 + 8 = 8.8 积分
+});
+```
+
+**交易元数据：**
+
+动态成本计算会自动记录在交易元数据中：
+
+```typescript
+const result = await engine.charge({
+  userId: 'user-123',
+  action: 'ai-completion',
+  variables: { token: 3500 }
+});
+
+// 交易记录包含：
+// {
+//   metadata: {
+//     dynamicCost: {
+//       formula: '{token} * 0.001 + 10',
+//       variables: { token: 3500 },
+//       rawCost: 13.5,
+//       finalCost: 13.5
+//     }
+//   }
+// }
+```
+
+**错误处理：**
+
+```typescript
+import { MissingVariableError, FormulaEvaluationError } from 'credit-sdk';
+
+try {
+  await engine.charge({
+    userId: 'user-123',
+    action: 'ai-completion',
+    variables: { token: 1000 }
+  });
+} catch (error) {
+  if (error instanceof MissingVariableError) {
+    // 公式需要的变量未提供
+    console.error('缺少变量:', error.missingVariable);
+  } else if (error instanceof FormulaEvaluationError) {
+    // 公式计算错误（如除零）
+    console.error('公式错误:', error.cause);
+  }
+}
+```
+
+### 静态定价策略
+
+您也可以实现不同的静态定价策略：
+
+**批量折扣：**
 ```typescript
 costs: {
   'api-call-small': { default: 1, premium: 0.8, enterprise: 0.5 },
@@ -61,12 +211,12 @@ costs: {
 }
 ```
 
-**Feature-Based Pricing:**
+**基于功能的定价：**
 ```typescript
 costs: {
   'basic-feature': { default: 5, premium: 5, enterprise: 5 },
   'advanced-feature': { default: 50, premium: 30, enterprise: 10 },
-  'premium-feature': { premium: 20, enterprise: 10 }  // Not available to default tier
+  'premium-feature': { premium: 20, enterprise: 10 }  // 默认等级不可用
 }
 ```
 

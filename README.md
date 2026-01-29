@@ -104,6 +104,195 @@ const history = await engine.getHistory('user-123', {
 const hasAccess = await engine.validateAccess('user-123', 'premium-feature');
 ```
 
+## � Dynamic Cost Formula
+
+The SDK supports dynamic cost formulas that calculate charges based on actual resource consumption (e.g., AI tokens, processing time).
+
+### Basic Configuration
+
+```typescript
+const engine = new CreditsEngine({
+  storage: adapter,
+  config: {
+    costs: {
+      // Fixed cost (traditional)
+      'generate-image': { 
+        default: 20, 
+        premium: 15 
+      },
+      
+      // Dynamic formula based on tokens
+      'ai-completion': {
+        default: '{token} * 0.001 + 10',      // 0.001 credits per token + 10 base fee
+        premium: '{token} * 0.0008 + 8',      // Member discount
+        enterprise: '{token} * 0.0005 + 5'
+      },
+      
+      // Multi-variable formula
+      'video-processing': {
+        default: '{duration} * 2 + {resolution} * 0.5',
+        premium: '({duration} * 2 + {resolution} * 0.5) * 0.8'  // 20% discount
+      }
+    }
+  }
+});
+```
+
+### Usage Examples
+
+#### Token-Based Billing (AI Services)
+
+```typescript
+// Charge based on actual token usage
+const result = await engine.charge({
+  userId: 'user-123',
+  action: 'ai-completion',
+  variables: {
+    token: 3500  // Used 3500 tokens
+  }
+});
+// Cost: 3500 * 0.001 + 10 = 13.5 credits
+```
+
+#### Duration-Based Billing
+
+```typescript
+// Charge based on processing time
+const result = await engine.charge({
+  userId: 'user-123',
+  action: 'video-processing',
+  variables: {
+    duration: 120,    // 120 seconds
+    resolution: 1080  // 1080p
+  }
+});
+// Cost: 120 * 2 + 1080 * 0.5 = 780 credits
+```
+
+#### Tiered Pricing
+
+```typescript
+const engine = new CreditsEngine({
+  storage: adapter,
+  config: {
+    costs: {
+      'data-analysis': {
+        // First 1000 rows: 0.1 credits each
+        // Additional rows: 0.05 credits each
+        default: '{rows} <= 1000 ? {rows} * 0.1 : 100 + ({rows} - 1000) * 0.05'
+      }
+    }
+  }
+});
+
+// Small dataset
+await engine.charge({
+  userId: 'user-123',
+  action: 'data-analysis',
+  variables: { rows: 500 }
+});
+// Cost: 500 * 0.1 = 50 credits
+
+// Large dataset
+await engine.charge({
+  userId: 'user-123',
+  action: 'data-analysis',
+  variables: { rows: 2000 }
+});
+// Cost: 100 + (2000 - 1000) * 0.05 = 150 credits
+```
+
+### Fallback Mechanism
+
+If variables are not provided, the system uses the default value (if it's a number):
+
+```typescript
+const engine = new CreditsEngine({
+  storage: adapter,
+  config: {
+    costs: {
+      'ai-completion': {
+        default: 10,  // Fallback value
+        premium: '{token} * 0.0008 + 8'
+      }
+    }
+  }
+});
+
+// Without variables - uses fallback
+await engine.charge({
+  userId: 'user-123',
+  action: 'ai-completion'
+  // No variables provided
+});
+// Cost: 10 credits (fallback)
+
+// With variables - uses formula
+await engine.charge({
+  userId: 'user-123',
+  action: 'ai-completion',
+  variables: { token: 1000 }
+});
+// Cost: 1000 * 0.0008 + 8 = 8.8 credits
+```
+
+### Transaction Metadata
+
+Dynamic cost calculations are automatically recorded in transaction metadata:
+
+```typescript
+const result = await engine.charge({
+  userId: 'user-123',
+  action: 'ai-completion',
+  variables: { token: 3500 }
+});
+
+// Transaction record includes:
+// {
+//   metadata: {
+//     dynamicCost: {
+//       formula: '{token} * 0.001 + 10',
+//       variables: { token: 3500 },
+//       rawCost: 13.5,
+//       finalCost: 13.5
+//     }
+//   }
+// }
+```
+
+### Supported Operators
+
+- **Arithmetic**: `+`, `-`, `*`, `/`
+- **Parentheses**: `(`, `)` for precedence
+- **Comparison**: `<`, `>`, `<=`, `>=`, `==`, `!=`
+- **Ternary**: `condition ? valueIfTrue : valueIfFalse`
+
+### Variable Naming Rules
+
+- Must start with a letter
+- Can contain letters, numbers, and underscores
+- Format: `{variableName}`
+
+### Error Handling
+
+```typescript
+try {
+  await engine.charge({
+    userId: 'user-123',
+    action: 'ai-completion',
+    variables: { token: 1000 }
+  });
+} catch (error) {
+  if (error instanceof MissingVariableError) {
+    // Formula requires a variable that wasn't provided
+    console.error('Missing variable:', error.missingVariable);
+  } else if (error instanceof FormulaEvaluationError) {
+    // Error during formula calculation (e.g., division by zero)
+    console.error('Formula error:', error.cause);
+  }
+}
+```
+
 ## 🔄 Transaction Support
 
 ```typescript
@@ -435,6 +624,195 @@ const history = await engine.getHistory('user-123', {
 
 // 验证访问权限
 const hasAccess = await engine.validateAccess('user-123', 'premium-feature');
+```
+
+## � 动态成本公式
+
+SDK 支持动态成本公式，可以根据实际资源消耗（如 AI token、处理时间等）计算费用。
+
+### 基础配置
+
+```typescript
+const engine = new CreditsEngine({
+  storage: adapter,
+  config: {
+    costs: {
+      // 固定成本（传统方式）
+      'generate-image': { 
+        default: 20, 
+        premium: 15 
+      },
+      
+      // 基于 token 的动态公式
+      'ai-completion': {
+        default: '{token} * 0.001 + 10',      // 每 token 0.001 积分 + 10 基础费用
+        premium: '{token} * 0.0008 + 8',      // 会员折扣
+        enterprise: '{token} * 0.0005 + 5'
+      },
+      
+      // 多变量公式
+      'video-processing': {
+        default: '{duration} * 2 + {resolution} * 0.5',
+        premium: '({duration} * 2 + {resolution} * 0.5) * 0.8'  // 20% 折扣
+      }
+    }
+  }
+});
+```
+
+### 使用示例
+
+#### 基于 Token 的计费（AI 服务）
+
+```typescript
+// 根据实际 token 使用量计费
+const result = await engine.charge({
+  userId: 'user-123',
+  action: 'ai-completion',
+  variables: {
+    token: 3500  // 使用了 3500 个 token
+  }
+});
+// 成本: 3500 * 0.001 + 10 = 13.5 积分
+```
+
+#### 基于时长的计费
+
+```typescript
+// 根据处理时间计费
+const result = await engine.charge({
+  userId: 'user-123',
+  action: 'video-processing',
+  variables: {
+    duration: 120,    // 120 秒
+    resolution: 1080  // 1080p
+  }
+});
+// 成本: 120 * 2 + 1080 * 0.5 = 780 积分
+```
+
+#### 阶梯定价
+
+```typescript
+const engine = new CreditsEngine({
+  storage: adapter,
+  config: {
+    costs: {
+      'data-analysis': {
+        // 前 1000 行：每行 0.1 积分
+        // 额外行数：每行 0.05 积分
+        default: '{rows} <= 1000 ? {rows} * 0.1 : 100 + ({rows} - 1000) * 0.05'
+      }
+    }
+  }
+});
+
+// 小数据集
+await engine.charge({
+  userId: 'user-123',
+  action: 'data-analysis',
+  variables: { rows: 500 }
+});
+// 成本: 500 * 0.1 = 50 积分
+
+// 大数据集
+await engine.charge({
+  userId: 'user-123',
+  action: 'data-analysis',
+  variables: { rows: 2000 }
+});
+// 成本: 100 + (2000 - 1000) * 0.05 = 150 积分
+```
+
+### 回退机制
+
+如果未提供变量，系统会使用默认值（如果默认值是数字）：
+
+```typescript
+const engine = new CreditsEngine({
+  storage: adapter,
+  config: {
+    costs: {
+      'ai-completion': {
+        default: 10,  // 回退值
+        premium: '{token} * 0.0008 + 8'
+      }
+    }
+  }
+});
+
+// 不提供变量 - 使用回退值
+await engine.charge({
+  userId: 'user-123',
+  action: 'ai-completion'
+  // 未提供变量
+});
+// 成本: 10 积分（回退值）
+
+// 提供变量 - 使用公式
+await engine.charge({
+  userId: 'user-123',
+  action: 'ai-completion',
+  variables: { token: 1000 }
+});
+// 成本: 1000 * 0.0008 + 8 = 8.8 积分
+```
+
+### 交易元数据
+
+动态成本计算会自动记录在交易元数据中：
+
+```typescript
+const result = await engine.charge({
+  userId: 'user-123',
+  action: 'ai-completion',
+  variables: { token: 3500 }
+});
+
+// 交易记录包含：
+// {
+//   metadata: {
+//     dynamicCost: {
+//       formula: '{token} * 0.001 + 10',
+//       variables: { token: 3500 },
+//       rawCost: 13.5,
+//       finalCost: 13.5
+//     }
+//   }
+// }
+```
+
+### 支持的运算符
+
+- **算术运算**: `+`, `-`, `*`, `/`
+- **括号**: `(`, `)` 用于控制优先级
+- **比较运算**: `<`, `>`, `<=`, `>=`, `==`, `!=`
+- **三元运算**: `condition ? valueIfTrue : valueIfFalse`
+
+### 变量命名规则
+
+- 必须以字母开头
+- 可以包含字母、数字和下划线
+- 格式: `{variableName}`
+
+### 错误处理
+
+```typescript
+try {
+  await engine.charge({
+    userId: 'user-123',
+    action: 'ai-completion',
+    variables: { token: 1000 }
+  });
+} catch (error) {
+  if (error instanceof MissingVariableError) {
+    // 公式需要的变量未提供
+    console.error('缺少变量:', error.missingVariable);
+  } else if (error instanceof FormulaEvaluationError) {
+    // 公式计算错误（如除零）
+    console.error('公式错误:', error.cause);
+  }
+}
 ```
 
 ## 🔄 事务支持
